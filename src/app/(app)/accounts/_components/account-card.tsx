@@ -5,6 +5,7 @@ import { Building2, CreditCard, Trash2, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { SyncButton } from '@/components/sync-button';
 import { getProvider } from '@/lib/providers';
 import { deleteAccount } from '../actions';
 import { t } from '@/lib/i18n/he';
@@ -18,14 +19,28 @@ type Account = {
   accountNumberMasked: string | null;
   lastScrapedAt: Date | null;
   scrapeStatus: string;
+  scrapeError: string | null;
   isActive: boolean;
 };
+
+function localizeScrapeError(error: string | null): string | null {
+  if (!error) return null;
+  if (error.startsWith('INVALID_PASSWORD')) return t.sync.errorInvalidPassword;
+  if (error.startsWith('CHANGE_PASSWORD')) return t.sync.errorChangePassword;
+  if (error.startsWith('TIMEOUT')) return t.sync.errorTimeout;
+  if (error.startsWith('BLOCKED')) return t.sync.errorBlocked;
+  return t.sync.errorGeneric;
+}
 
 export function AccountCard({ account }: { account: Account }) {
   const provider = getProvider(account.provider);
   const [editing, setEditing] = useState(false);
   const [pending, startTransition] = useTransition();
   const Icon = account.type === 'bank' ? Building2 : CreditCard;
+  const errorMessage =
+    account.scrapeStatus === 'error'
+      ? localizeScrapeError(account.scrapeError)
+      : null;
 
   function handleDelete() {
     if (!confirm(t.accounts.deleteConfirm)) return;
@@ -59,6 +74,11 @@ export function AccountCard({ account }: { account: Account }) {
           </div>
 
           <div className="flex gap-1 shrink-0">
+            <SyncButton
+              accountId={account.id}
+              size="icon"
+              variant="ghost"
+            />
             <Button
               variant="ghost"
               size="icon"
@@ -84,6 +104,10 @@ export function AccountCard({ account }: { account: Account }) {
             ? `${t.accounts.lastSync}: ${new Date(account.lastScrapedAt).toLocaleString('he-IL')}`
             : t.accounts.neverSynced}
         </div>
+
+        {errorMessage && (
+          <p className="mt-2 text-xs text-rose-600">{errorMessage}</p>
+        )}
       </Card>
 
       <EditAccountDialog

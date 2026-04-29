@@ -6,6 +6,11 @@ import {
   integer,
   boolean,
   primaryKey,
+  numeric,
+  date,
+  index,
+  unique,
+  type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 
 export const users = pgTable('users', {
@@ -61,3 +66,57 @@ export const accounts = pgTable('accounts', {
   isActive: boolean('is_active').notNull().default(true),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
+
+export const categories = pgTable(
+  'categories',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    householdId: uuid('household_id').references(() => households.id, {
+      onDelete: 'cascade',
+    }),
+    key: text('key').notNull(),
+    parentId: uuid('parent_id').references((): AnyPgColumn => categories.id),
+    icon: text('icon'),
+    color: text('color'),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [unique('categories_household_key_unique').on(t.householdId, t.key)],
+);
+
+export const transactions = pgTable(
+  'transactions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    accountId: uuid('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    householdId: uuid('household_id')
+      .notNull()
+      .references(() => households.id, { onDelete: 'cascade' }),
+    externalId: text('external_id'),
+    date: date('date').notNull(),
+    processedDate: date('processed_date'),
+    amount: numeric('amount', { precision: 12, scale: 2 }).notNull(),
+    description: text('description').notNull(),
+    rawDescription: text('raw_description'),
+    normalizedDescription: text('normalized_description'),
+    categoryId: uuid('category_id').references(() => categories.id),
+    installmentNumber: integer('installment_number'),
+    installmentTotal: integer('installment_total'),
+    isUserModified: boolean('is_user_modified').notNull().default(false),
+    notes: text('notes'),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    unique('transactions_account_external_unique').on(
+      t.accountId,
+      t.externalId,
+    ),
+    index('idx_tx_household_date').on(t.householdId, t.date.desc()),
+    index('idx_tx_normalized').on(t.householdId, t.normalizedDescription),
+  ],
+);

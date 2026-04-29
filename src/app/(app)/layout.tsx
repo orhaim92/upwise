@@ -31,6 +31,12 @@ export default async function AppLayout({
                 {t.dashboard.title}
               </Link>
               <Link
+                href="/transactions"
+                className="text-slate-700 hover:text-violet-600 transition-colors"
+              >
+                {t.transactions.title}
+              </Link>
+              <Link
                 href="/accounts"
                 className="text-slate-700 hover:text-violet-600 transition-colors"
               >

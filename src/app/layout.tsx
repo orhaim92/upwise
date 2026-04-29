@@ -22,7 +22,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="he" dir="rtl" className={`${rubik.variable} h-full antialiased`}>
-      <body className="font-sans bg-slate-50 text-indigo-950 min-h-full flex flex-col">
+      <body
+        className="font-sans bg-slate-50 text-indigo-950 min-h-full flex flex-col"
+        suppressHydrationWarning
+      >
         {children}
         <Toaster position="top-center" richColors />
       </body>
