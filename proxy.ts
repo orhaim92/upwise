@@ -28,5 +28,10 @@ export default auth((req) => {
 });
 
 export const config = {
+  // Run middleware in Node.js so the auth config (which transitively imports
+  // the postgres-js driver) can initialize. The Edge runtime doesn't support
+  // postgres-js — without this the middleware silently fails at request time
+  // and Vercel's edge returns a generic 404 with no function logs.
+  runtime: 'nodejs',
   matcher: ['/((?!api/auth|_next/static|_next/image|favicon.ico|logo.svg|logo-icon.svg).*)'],
 };
