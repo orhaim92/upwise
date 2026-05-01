@@ -1,3 +1,31 @@
+// Hebrew month abbreviations + full names that often appear in bank descriptions.
+const HEBREW_MONTHS = [
+  'ינואר',
+  'פברואר',
+  'מרץ',
+  'מרס',
+  'אפריל',
+  'מאי',
+  'יוני',
+  'יולי',
+  'אוגוסט',
+  'ספטמבר',
+  'אוקטובר',
+  'נובמבר',
+  'דצמבר',
+  'ינו',
+  'פבר',
+  'אפר',
+  'יונ',
+  'יול',
+  'אוג',
+  'ספט',
+  'אוק',
+  'נוב',
+  'דצמ',
+];
+const HEBREW_MONTH_RE = new RegExp(`\\b(${HEBREW_MONTHS.join('|')})\\b`, 'g');
+
 export function normalizeDescription(raw: string): string {
   return raw
     .toLowerCase()
@@ -5,7 +33,12 @@ export function normalizeDescription(raw: string): string {
     .replace(/תשלום\s+\d+(\s*מתוך\s*\d+)?/g, '')
     .replace(/\d{1,2}\/\d{1,2}\/\d{2,4}/g, '')
     .replace(/\d{1,2}-\d{1,2}-\d{2,4}/g, '')
-    .replace(/\b\d{4,}\b/g, '')
+    .replace(/\b\d{1,2}\/\d{2,4}\b/g, '')
+    .replace(/\b\d{1,2}-\d{2,4}\b/g, '')
+    .replace(HEBREW_MONTH_RE, '')
+    .replace(/\b\d{3,}\b/g, '')
+    .replace(/[-–—]+/g, ' ')
+    .replace(/[()]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
