@@ -13,8 +13,11 @@ const CRON_SECRET = process.env.CRON_SECRET;
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-// Vercel Cron triggers GET hourly. We pick subscribers whose
-// `send_time_local` hour matches the current Israel hour and dispatch.
+// Vercel Cron triggers GET once per day (Hobby tier caps at daily). The
+// route sends the digest to every verified, enabled, non-opted-out
+// subscriber. The `send_time_local` field is preserved as user intent for
+// when we move to hourly cron (Pro tier or self-hosted scheduler), but is
+// not used as a filter today.
 //
 // Sequential per-user dispatch is fine for personal-scale use (well under 50
 // subscribers). Twilio sandbox restrictions still apply: a recipient must
@@ -29,20 +32,11 @@ export async function GET(req: Request) {
   }
 
   const now = new Date();
-  const israelHour = parseInt(
-    new Intl.DateTimeFormat('en-US', {
-      hour: 'numeric',
-      hour12: false,
-      timeZone: 'Asia/Jerusalem',
-    }).format(now),
-    10,
-  );
 
   const candidates = await db
     .select({
       userId: whatsappSubscriptions.userId,
       phoneE164: whatsappSubscriptions.phoneE164,
-      sendTimeLocal: whatsappSubscriptions.sendTimeLocal,
       lastSentAt: whatsappSubscriptions.lastSentAt,
     })
     .from(whatsappSubscriptions)
@@ -63,18 +57,13 @@ export async function GET(req: Request) {
   const results: Result[] = [];
 
   for (const c of candidates) {
-    // sendTimeLocal is "HH:MM:SS"
-    const targetHour = parseInt(c.sendTimeLocal.slice(0, 2), 10);
-    if (targetHour !== israelHour) {
-      results.push({ userId: c.userId, sent: false, skipped: 'wrong hour' });
-      continue;
-    }
-
-    // Idempotency: if cron fires twice in the same hour, don't double-send
+    // Idempotency: if cron fires twice in the same window, don't double-send.
+    // Threshold is 12h so a manual re-trigger same day is blocked but a
+    // genuine next-day cron always proceeds.
     if (c.lastSentAt) {
       const hoursSince =
         (now.getTime() - new Date(c.lastSentAt).getTime()) / (1000 * 60 * 60);
-      if (hoursSince < 2) {
+      if (hoursSince < 12) {
         results.push({ userId: c.userId, sent: false, skipped: 'recent send' });
         continue;
       }
