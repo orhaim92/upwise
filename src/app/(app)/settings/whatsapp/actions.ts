@@ -88,10 +88,13 @@ export async function requestVerificationCode(
   const message = `UpWise: קוד האימות שלך הוא ${code}. תקף ל-10 דקות.`;
   const result = await sendWhatsApp(phone, message);
   if (!result.ok) {
+    const hint =
+      'ודא שהצטרפת ל-Twilio Sandbox (שלח "join <מילת-קוד>" ל-+14155238886 מהוואטסאפ שלך).';
     return {
       ok: false,
-      error:
-        'לא ניתן לשלוח קוד. ודא שהצטרפת ל-Twilio Sandbox (שלח את "join <מילת-קוד>" למספר Sandbox מהוואטסאפ שלך)',
+      error: result.error
+        ? `שגיאת Twilio: ${result.error}. ${hint}`
+        : `לא ניתן לשלוח קוד. ${hint}`,
     };
   }
 
