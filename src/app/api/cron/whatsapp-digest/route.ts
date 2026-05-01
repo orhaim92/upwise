@@ -31,6 +31,9 @@ export async function GET(req: Request) {
     }
   }
 
+  const url = new URL(req.url);
+  const force = url.searchParams.get('force') === '1';
+
   const now = new Date();
 
   const candidates = await db
@@ -59,8 +62,9 @@ export async function GET(req: Request) {
   for (const c of candidates) {
     // Idempotency: if cron fires twice in the same window, don't double-send.
     // Threshold is 12h so a manual re-trigger same day is blocked but a
-    // genuine next-day cron always proceeds.
-    if (c.lastSentAt) {
+    // genuine next-day cron always proceeds. `?force=1` bypasses for
+    // testing — the CRON_SECRET still gates the endpoint.
+    if (!force && c.lastSentAt) {
       const hoursSince =
         (now.getTime() - new Date(c.lastSentAt).getTime()) / (1000 * 60 * 60);
       if (hoursSince < 12) {
