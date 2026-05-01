@@ -1,10 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { signIn } from 'next-auth/react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -14,8 +14,30 @@ import { signupSchema, type SignupInput } from '@/lib/validations/auth';
 import { t } from '@/lib/i18n/he';
 
 export default function SignupPage() {
+  return (
+    <Suspense>
+      <SignupForm />
+    </Suspense>
+  );
+}
+
+function SignupForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [submitting, setSubmitting] = useState(false);
+
+  const redirectTo = searchParams.get('redirect') ?? '/dashboard';
+  // If signup was reached via /invite/accept?token=X, extract the token so
+  // the signup endpoint can skip auto-creating a household.
+  const inviteToken = (() => {
+    if (!redirectTo.startsWith('/invite/accept')) return null;
+    try {
+      const url = new URL(redirectTo, 'http://placeholder.local');
+      return url.searchParams.get('token');
+    } catch {
+      return null;
+    }
+  })();
 
   const {
     register,
@@ -31,7 +53,10 @@ export default function SignupPage() {
       const res = await fetch('/api/auth/signup', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(values),
+        body: JSON.stringify({
+          ...values,
+          ...(inviteToken ? { inviteToken } : {}),
+        }),
       });
 
       if (!res.ok) {
@@ -56,7 +81,7 @@ export default function SignupPage() {
       }
 
       toast.success(t.auth.signupSuccess);
-      router.push('/dashboard');
+      router.push(redirectTo);
       router.refresh();
     } finally {
       setSubmitting(false);

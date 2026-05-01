@@ -1,10 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { signIn } from 'next-auth/react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -14,7 +14,17 @@ import { loginSchema, type LoginInput } from '@/lib/validations/auth';
 import { t } from '@/lib/i18n/he';
 
 export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginForm />
+    </Suspense>
+  );
+}
+
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const redirectTo = searchParams.get('redirect') ?? '/dashboard';
   const [submitting, setSubmitting] = useState(false);
 
   const {
@@ -38,7 +48,7 @@ export default function LoginPage() {
       toast.error(t.auth.invalidCredentials);
       return;
     }
-    router.push('/dashboard');
+    router.push(redirectTo);
     router.refresh();
   }
 
