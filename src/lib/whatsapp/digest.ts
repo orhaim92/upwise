@@ -58,22 +58,31 @@ export async function buildDigest(householdId: string): Promise<string> {
   const yesterday = await bankExpenseSum(yesterdayStr, yesterdayStr);
   const sevenDays = await bankExpenseSum(sevenDaysAgoStr, todayStr);
 
+  // Daily budget = available / days_remaining, but never negative (we show
+  // ₪0 with a warning instead). When you're over budget the answer to
+  // "how much can I spend today" is "nothing — recover first".
+  const dailyBudget = Math.max(0, allowance.dailyAllowance);
+
   const lines: string[] = [];
-  lines.push('בוקר טוב 🌟');
+  lines.push('☀️ *בוקר טוב!*');
   lines.push('');
+  lines.push('📊 *הוצאות אחרונות*');
   lines.push(`אתמול: ${formatILS(yesterday)}`);
   lines.push(`7 ימים אחרונים: ${formatILS(sevenDays)}`);
   lines.push('');
-  lines.push(`תקציב פנוי במחזור: ${formatILS(allowance.availableToSpend)}`);
-  lines.push(`${allowance.cycle.daysRemaining} ימים עד סוף המחזור`);
+  lines.push(
+    `💰 *מחזור נוכחי (נותרו ${allowance.cycle.daysRemaining} ימים)*`,
+  );
+  lines.push(`זמין במחזור: ${formatILS(allowance.availableToSpend)}`);
+  lines.push(`תקציב יומי: ${formatILS(dailyBudget)}`);
 
-  if (allowance.dailyAllowance > 0) {
-    lines.push(`ניתן להוציא: ${formatILS(allowance.dailyAllowance)}/יום`);
-  } else if (allowance.isOverBudget) {
+  if (allowance.isOverBudget) {
+    lines.push('');
     lines.push(
-      `⚠️ ${formatILS(Math.abs(allowance.availableToSpend))} מעל התקציב`,
+      `⚠️ חרגת ב-${formatILS(Math.abs(allowance.availableToSpend))} מהתקציב`,
     );
   } else if (allowance.isLowBalance) {
+    lines.push('');
     lines.push('⚠️ יתרה זמינה נמוכה');
   }
 
