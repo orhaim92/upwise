@@ -54,5 +54,8 @@ _bmad-output/
 # Parking lot for scaffolding
 .parked/
 
+# Debug scraper dumps (contain real bank transaction data)
+scraper-dump-*.json
+
 .vercel
 .env*.local

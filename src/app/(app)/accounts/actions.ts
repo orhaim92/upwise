@@ -1,6 +1,6 @@
 'use server';
 
-import { eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { auth } from '@/lib/auth/config';
 import { db } from '@/lib/db';
@@ -36,11 +36,107 @@ export async function listAccounts() {
       scrapeStatus: accounts.scrapeStatus,
       scrapeError: accounts.scrapeError,
       isActive: accounts.isActive,
+      currentBalance: accounts.currentBalance,
+      balanceUpdatedAt: accounts.balanceUpdatedAt,
       createdAt: accounts.createdAt,
     })
     .from(accounts)
     .where(eq(accounts.householdId, householdId))
     .orderBy(accounts.createdAt);
+}
+
+export async function listBankAccountsLight() {
+  const session = await auth();
+  if (!session?.user?.id) return [];
+  const householdId = await getUserHouseholdId(session.user.id);
+
+  return db
+    .select({
+      id: accounts.id,
+      displayName: accounts.displayName,
+    })
+    .from(accounts)
+    .where(
+      and(
+        eq(accounts.householdId, householdId),
+        eq(accounts.type, 'bank'),
+        eq(accounts.isActive, true),
+      ),
+    )
+    .orderBy(accounts.displayName);
+}
+
+export async function listCreditCardAccountsLight() {
+  const session = await auth();
+  if (!session?.user?.id) return [];
+  const householdId = await getUserHouseholdId(session.user.id);
+
+  return db
+    .select({
+      id: accounts.id,
+      displayName: accounts.displayName,
+    })
+    .from(accounts)
+    .where(
+      and(
+        eq(accounts.householdId, householdId),
+        eq(accounts.type, 'credit_card'),
+        eq(accounts.isActive, true),
+      ),
+    )
+    .orderBy(accounts.displayName);
+}
+
+// Phase 4.8: returns distinct (account, card_last_four) pairs from existing
+// transactions — i.e. each physical card we've actually scraped, not just the
+// CC account login. Used by the mark-as-card-statement dialog.
+export async function listCardsForHousehold(): Promise<
+  Array<{ accountId: string; accountDisplayName: string; cardLastFour: string }>
+> {
+  const session = await auth();
+  if (!session?.user?.id) return [];
+  const householdId = await getUserHouseholdId(session.user.id);
+
+  const rows = await db.execute<{
+    account_id: string;
+    display_name: string;
+    card_last_four: string;
+  }>(sql`
+    SELECT DISTINCT
+      t.account_id,
+      a.display_name,
+      t.card_last_four
+    FROM transactions t
+    INNER JOIN accounts a ON a.id = t.account_id
+    WHERE t.household_id = ${householdId}
+      AND a.type = 'credit_card'
+      AND t.card_last_four IS NOT NULL
+    ORDER BY a.display_name, t.card_last_four
+  `);
+
+  const list: Array<{
+    account_id: string;
+    display_name: string;
+    card_last_four: string;
+  }> =
+    (rows as unknown as {
+      rows?: Array<{
+        account_id: string;
+        display_name: string;
+        card_last_four: string;
+      }>;
+    })?.rows ??
+    (rows as unknown as Array<{
+      account_id: string;
+      display_name: string;
+      card_last_four: string;
+    }>);
+
+  return list.map((r) => ({
+    accountId: r.account_id,
+    accountDisplayName: r.display_name,
+    cardLastFour: r.card_last_four,
+  }));
 }
 
 export async function addAccount(input: unknown): Promise<ActionResult> {
@@ -103,6 +199,8 @@ export async function updateAccount(input: unknown): Promise<ActionResult> {
     .where(eq(accounts.id, id));
 
   revalidatePath('/accounts');
+  revalidatePath('/transactions');
+  revalidatePath('/dashboard');
   return { ok: true };
 }
 

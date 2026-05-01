@@ -6,7 +6,8 @@ import { accounts } from '@/lib/db/schema';
 import { SyncButton } from '@/components/sync-button';
 import { TransactionsFilters } from './_components/transactions-filters';
 import { TransactionsTable } from './_components/transactions-table';
-import { listTransactions } from './queries';
+import { listTransactionsGrouped } from './queries';
+import { listCategoriesForHousehold } from './actions';
 import { t } from '@/lib/i18n/he';
 
 type Props = {
@@ -16,6 +17,7 @@ type Props = {
     accountId?: string;
     type?: string;
     search?: string;
+    showSpecial?: string;
   }>;
 };
 
@@ -24,16 +26,19 @@ export default async function TransactionsPage({ searchParams }: Props) {
   const householdId = await getUserHouseholdId(session!.user.id);
   const params = await searchParams;
 
+  const showSpecial = params.showSpecial === '1';
   const filters = {
     startDate: params.startDate,
     endDate: params.endDate,
     accountId: params.accountId,
     type: params.type as 'income' | 'expense' | 'all' | undefined,
     search: params.search,
+    includeTransfers: showSpecial,
+    includeAggregates: showSpecial,
   };
 
-  const [txs, accountList] = await Promise.all([
-    listTransactions(householdId, filters, 500),
+  const [txs, accountList, categories] = await Promise.all([
+    listTransactionsGrouped(householdId, filters, 500),
     db
       .select({
         id: accounts.id,
@@ -41,6 +46,7 @@ export default async function TransactionsPage({ searchParams }: Props) {
       })
       .from(accounts)
       .where(eq(accounts.householdId, householdId)),
+    listCategoriesForHousehold(),
   ]);
 
   return (
@@ -57,7 +63,7 @@ export default async function TransactionsPage({ searchParams }: Props) {
           <p className="text-slate-500">{t.transactions.empty}</p>
         </div>
       ) : (
-        <TransactionsTable transactions={txs} />
+        <TransactionsTable transactions={txs} categories={categories} />
       )}
     </div>
   );

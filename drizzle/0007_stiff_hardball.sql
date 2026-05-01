@@ -1,0 +1,1 @@
+ALTER TABLE "transactions" ADD COLUMN "card_last_four" text;

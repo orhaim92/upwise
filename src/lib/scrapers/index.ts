@@ -23,6 +23,10 @@ export type ScrapedTransaction = {
   installmentNumber: number | null;
   installmentTotal: number | null;
   accountNumberMasked: string | null;
+  // Phase 4.8: last 4 digits of the source card. For CC scrapers,
+  // israeli-bank-scrapers returns one sub-account per physical card; this
+  // captures which card produced this transaction.
+  cardLastFour: string | null;
 };
 
 export type ScrapeResult =
@@ -30,6 +34,7 @@ export type ScrapeResult =
       success: true;
       transactions: ScrapedTransaction[];
       accountNumberMasked: string | null;
+      currentBalance: number | null;
     }
   | {
       success: false;
@@ -80,6 +85,26 @@ export async function scrapeAccount(params: {
 
     const result = await scraper.scrape(credentials);
 
+    // TEMP debug: dump the raw scraper response to a file for inspection.
+    // Remove once aggregate detection is dialed in.
+    if (process.env.NODE_ENV !== 'production') {
+      try {
+        const fs = await import('fs');
+        const path = await import('path');
+        const ts = new Date().toISOString().replace(/[:.]/g, '-');
+        const outFile = path.join(
+          process.cwd(),
+          `scraper-dump-${params.provider}-${ts}.json`,
+        );
+        fs.writeFileSync(outFile, JSON.stringify(result, null, 2), 'utf8');
+        console.log(
+          `[scrape:${params.provider}] raw response written to ${outFile}`,
+        );
+      } catch (dumpErr) {
+        console.warn(`[scrape:${params.provider}] dump failed:`, dumpErr);
+      }
+    }
+
     if (!result.success) {
       return {
         success: false,
@@ -101,7 +126,7 @@ export async function scrapeAccount(params: {
       installments?: { number: number; total: number };
     };
 
-    function pushTx(t: RawTx, mask: string | null) {
+    function pushTx(t: RawTx, mask: string | null, last4: string | null) {
       allTxs.push({
         externalId: t.identifier?.toString() ?? null,
         date: new Date(t.date),
@@ -112,6 +137,7 @@ export async function scrapeAccount(params: {
         installmentNumber: t.installments?.number ?? null,
         installmentTotal: t.installments?.total ?? null,
         accountNumberMasked: mask,
+        cardLastFour: last4,
       });
     }
 
@@ -120,12 +146,18 @@ export async function scrapeAccount(params: {
     // identifiers. Match on content alone — collisions for distinct-but-
     // identical transactions on the same day are rare in personal finance.
     const seen = new Set<string>();
+    let currentBalance: number | null = null;
 
     for (const account of result.accounts ?? []) {
       if (!firstAccountMask) {
         firstAccountMask = maskAccountNumber(account.accountNumber);
       }
       const mask = maskAccountNumber(account.accountNumber);
+      const last4 = extractLastFour(account.accountNumber);
+      const accountWithBalance = account as unknown as { balance?: number };
+      if (typeof accountWithBalance.balance === 'number') {
+        currentBalance = (currentBalance ?? 0) + accountWithBalance.balance;
+      }
       const rawTxs = (account.txns ?? []) as unknown as RawTx[];
       let kept = 0;
       let skipped = 0;
@@ -137,12 +169,12 @@ export async function scrapeAccount(params: {
           continue;
         }
         seen.add(contentKey);
-        pushTx(t, mask);
+        pushTx(t, mask, last4);
         kept++;
       }
       if (process.env.NODE_ENV !== 'production') {
         console.log(
-          `[scrape:${params.provider}] account ${mask ?? '?'} → ${rawTxs.length} txns (kept ${kept}, skipped ${skipped} cross-account dups)`,
+          `[scrape:${params.provider}] account ${mask ?? '?'} (last4=${last4 ?? 'n/a'}) → ${rawTxs.length} txns (kept ${kept}, skipped ${skipped} cross-account dups)`,
         );
       }
     }
@@ -161,6 +193,7 @@ export async function scrapeAccount(params: {
       success: true,
       transactions: allTxs,
       accountNumberMasked: firstAccountMask,
+      currentBalance,
     };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
@@ -194,4 +227,10 @@ function maskAccountNumber(
   const digits = accountNumber.replace(/\D/g, '');
   if (digits.length <= 4) return accountNumber;
   return `••••${digits.slice(-4)}`;
+}
+
+function extractLastFour(accountNumber: string | undefined): string | null {
+  if (!accountNumber) return null;
+  const digits = accountNumber.replace(/\D/g, '');
+  return digits.length >= 4 ? digits.slice(-4) : null;
 }

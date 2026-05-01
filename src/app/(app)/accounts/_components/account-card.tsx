@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { SyncButton } from '@/components/sync-button';
 import { getProvider } from '@/lib/providers';
 import { deleteAccount } from '../actions';
+import { formatILS } from '@/lib/format';
 import { t } from '@/lib/i18n/he';
 import { EditAccountDialog } from './edit-account-dialog';
 
@@ -21,6 +22,12 @@ type Account = {
   scrapeStatus: string;
   scrapeError: string | null;
   isActive: boolean;
+  currentBalance: string | null;
+  balanceUpdatedAt: Date | null;
+};
+
+type Props = {
+  account: Account;
 };
 
 function localizeScrapeError(error: string | null): string | null {
@@ -32,7 +39,7 @@ function localizeScrapeError(error: string | null): string | null {
   return t.sync.errorGeneric;
 }
 
-export function AccountCard({ account }: { account: Account }) {
+export function AccountCard({ account }: Props) {
   const provider = getProvider(account.provider);
   const [editing, setEditing] = useState(false);
   const [pending, startTransition] = useTransition();
@@ -98,6 +105,21 @@ export function AccountCard({ account }: { account: Account }) {
             </Button>
           </div>
         </div>
+
+        {account.type === 'bank' && account.currentBalance !== null && (
+          <div className="mt-4 pt-4 border-t border-slate-100">
+            <div className="text-xs text-slate-500">{t.balance.total}</div>
+            <div
+              className={`text-2xl font-semibold tabular-nums ${
+                Number(account.currentBalance) < 0
+                  ? 'text-rose-600'
+                  : 'text-slate-900'
+              }`}
+            >
+              <bdi>{formatILS(Number(account.currentBalance))}</bdi>
+            </div>
+          </div>
+        )}
 
         <div className="mt-4 pt-4 border-t border-slate-100 text-xs text-slate-500">
           {account.lastScrapedAt

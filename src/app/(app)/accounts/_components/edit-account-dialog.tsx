@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import {
   Dialog,
@@ -15,7 +15,11 @@ import { updateAccount } from '../actions';
 import { t } from '@/lib/i18n/he';
 
 type Props = {
-  account: { id: string; displayName: string };
+  account: {
+    id: string;
+    displayName: string;
+    type?: 'bank' | 'credit_card';
+  };
   open: boolean;
   onOpenChange: (open: boolean) => void;
 };
@@ -23,6 +27,10 @@ type Props = {
 export function EditAccountDialog({ account, open, onOpenChange }: Props) {
   const [displayName, setDisplayName] = useState(account.displayName);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (open) setDisplayName(account.displayName);
+  }, [open, account.id, account.displayName]);
 
   async function handleSubmit() {
     setSubmitting(true);
@@ -45,18 +53,18 @@ export function EditAccountDialog({ account, open, onOpenChange }: Props) {
         <DialogHeader>
           <DialogTitle>{t.accounts.editTitle}</DialogTitle>
         </DialogHeader>
-        <div className="space-y-4">
+        <div className="space-y-4 max-h-[60vh] overflow-y-auto pe-1">
           <div className="space-y-2">
-            <Label htmlFor="edit-display-name">
-              {t.accounts.displayName}
-            </Label>
+            <Label htmlFor="edit-display-name">{t.accounts.displayName}</Label>
             <Input
               id="edit-display-name"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
             />
           </div>
+
           <p className="text-xs text-slate-500">{t.accounts.editNote}</p>
+
           <Button
             onClick={handleSubmit}
             disabled={submitting || !displayName.trim()}

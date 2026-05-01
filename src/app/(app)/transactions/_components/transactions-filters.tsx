@@ -124,6 +124,21 @@ export function TransactionsFilters({ accounts }: Props) {
           </div>
         )}
       </div>
+
+      <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={params.get('showSpecial') === '1'}
+          onChange={(e) => {
+            const next = new URLSearchParams(params);
+            if (e.target.checked) next.set('showSpecial', '1');
+            else next.delete('showSpecial');
+            router.replace(`${pathname}?${next.toString()}`);
+          }}
+          className="size-4 rounded border-slate-300 accent-violet-600"
+        />
+        {t.transactions.showSpecial}
+      </label>
     </div>
   );
 }

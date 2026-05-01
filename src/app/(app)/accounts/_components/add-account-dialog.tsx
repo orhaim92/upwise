@@ -93,7 +93,7 @@ export function AddAccountDialog() {
             </div>
           </div>
 
-          <div className="space-y-4">
+          <div className="space-y-4 max-h-[60vh] overflow-y-auto pe-1">
             <div className="space-y-2">
               <Label>{t.accounts.provider}</Label>
               <Select

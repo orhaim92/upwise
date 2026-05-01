@@ -1,0 +1,157 @@
+import { and, eq, isNotNull, sql } from 'drizzle-orm';
+import { addDays, format, subDays } from 'date-fns';
+import { db } from '@/lib/db';
+import { accounts, transactions } from '@/lib/db/schema';
+
+// Phase 4.8.2: per-card aggregate detection driven by amount + date matching.
+//
+// Many Israeli bank descriptions for CC charges DON'T contain the card last4
+// (e.g. "חיוב כרטיס: מזרחי"). So we can't filter by description. Instead we
+// use the strongest signal: for each candidate bank charge, check if exactly
+// one known card has a matching CC sum on (or near) the bank charge date.
+//
+// Algorithm: for each unmarked negative bank tx above MIN_AMOUNT, compute the
+// CC sum per card on bank.date ±1 day. If exactly one card matches the bank
+// amount within tolerance, mark the bank tx as that card's aggregate.
+// Multiple matches → ambiguous, skip. Zero matches → not an aggregate.
+//
+// Idempotent. Skips user-modified rows.
+const MIN_AGGREGATE_AMOUNT = 50;
+const SUM_TOLERANCE = 0.05;
+const WINDOW_DAYS = 1;
+
+export async function detectCreditCardAggregates(
+  householdId: string,
+): Promise<number> {
+  const cards = await db
+    .selectDistinct({
+      accountId: transactions.accountId,
+      cardLastFour: transactions.cardLastFour,
+    })
+    .from(transactions)
+    .innerJoin(accounts, eq(accounts.id, transactions.accountId))
+    .where(
+      and(
+        eq(transactions.householdId, householdId),
+        eq(accounts.type, 'credit_card'),
+        isNotNull(transactions.cardLastFour),
+      ),
+    );
+
+  if (cards.length === 0) return 0;
+
+  const bankAccs = await db
+    .select({ id: accounts.id })
+    .from(accounts)
+    .where(
+      and(
+        eq(accounts.householdId, householdId),
+        eq(accounts.type, 'bank'),
+        eq(accounts.isActive, true),
+      ),
+    );
+  if (bankAccs.length === 0) return 0;
+
+  const bankInList = sql.join(
+    bankAccs.map((b) => sql`${b.id}`),
+    sql`, `,
+  );
+
+  // Pull every candidate bank tx in one query
+  const candidatesRaw = await db.execute<{
+    id: string;
+    date: string;
+    amount: string;
+  }>(sql`
+    SELECT id, date::text, amount::text
+    FROM transactions
+    WHERE household_id = ${householdId}
+      AND account_id IN (${bankInList})
+      AND amount < 0
+      AND date >= now() - interval '120 days'
+      AND is_aggregated_charge = false
+      AND is_internal_transfer = false
+      AND is_user_modified = false
+      AND abs(amount) >= ${MIN_AGGREGATE_AMOUNT}
+  `);
+
+  const candidates: Array<{ id: string; date: string; amount: string }> =
+    (candidatesRaw as unknown as {
+      rows?: Array<{ id: string; date: string; amount: string }>;
+    })?.rows ??
+    (candidatesRaw as unknown as Array<{
+      id: string;
+      date: string;
+      amount: string;
+    }>);
+
+  let marked = 0;
+  let skippedAmbiguous = 0;
+  let skippedNoMatch = 0;
+
+  for (const cand of candidates) {
+    const bankAmount = Math.abs(parseFloat(cand.amount));
+    const candDate = new Date(cand.date);
+    const windowStart = format(subDays(candDate, WINDOW_DAYS), 'yyyy-MM-dd');
+    const windowEnd = format(addDays(candDate, WINDOW_DAYS), 'yyyy-MM-dd');
+    const tolerance = bankAmount * SUM_TOLERANCE;
+
+    const matchingCards: Array<{ accountId: string; cardLastFour: string }> = [];
+
+    for (const card of cards) {
+      if (!card.cardLastFour) continue;
+
+      const sumResult = await db.execute<{ total: string }>(sql`
+        SELECT COALESCE(sum(-amount), 0)::text as total
+        FROM transactions
+        WHERE household_id = ${householdId}
+          AND account_id = ${card.accountId}
+          AND card_last_four = ${card.cardLastFour}
+          AND amount < 0
+          AND processed_date IS NOT NULL
+          AND processed_date >= ${windowStart}
+          AND processed_date <= ${windowEnd}
+      `);
+
+      const sumRows: Array<{ total: string }> =
+        (sumResult as unknown as { rows?: Array<{ total: string }> })?.rows ??
+        (sumResult as unknown as Array<{ total: string }>);
+
+      const ccTotal = parseFloat(sumRows[0]?.total ?? '0');
+      if (ccTotal === 0) continue;
+      if (Math.abs(ccTotal - bankAmount) > tolerance) continue;
+
+      matchingCards.push({
+        accountId: card.accountId,
+        cardLastFour: card.cardLastFour,
+      });
+    }
+
+    if (matchingCards.length === 0) {
+      skippedNoMatch++;
+      continue;
+    }
+    if (matchingCards.length > 1) {
+      skippedAmbiguous++;
+      continue;
+    }
+
+    const winner = matchingCards[0];
+    await db
+      .update(transactions)
+      .set({
+        isAggregatedCharge: true,
+        cardLastFour: winner.cardLastFour,
+      })
+      .where(eq(transactions.id, cand.id));
+    marked++;
+  }
+
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(
+      `[cc-aggregates] candidates=${candidates.length} marked=${marked} skippedAmbiguous=${skippedAmbiguous} skippedNoMatch=${skippedNoMatch}`,
+    );
+  }
+
+  return marked;
+}
