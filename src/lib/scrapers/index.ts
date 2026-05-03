@@ -81,6 +81,11 @@ export async function scrapeAccount(params: {
       showBrowser: false,
       verbose: false,
       timeout: 120_000,
+      // GitHub Actions Ubuntu runners restrict user namespaces, so Chrome's
+      // sandbox can't initialize. --no-sandbox is the standard CI workaround.
+      // Safe here because we control the input (our own bank credentials)
+      // and the page lifetime (one scrape, then exit).
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
     });
 
     const result = await scraper.scrape(credentials);
