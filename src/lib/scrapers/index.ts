@@ -81,11 +81,25 @@ export async function scrapeAccount(params: {
       showBrowser: false,
       verbose: false,
       timeout: 120_000,
-      // GitHub Actions Ubuntu runners restrict user namespaces, so Chrome's
-      // sandbox can't initialize. --no-sandbox is the standard CI workaround.
-      // Safe here because we control the input (our own bank credentials)
-      // and the page lifetime (one scrape, then exit).
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      // CI / anti-detection args:
+      //  --no-sandbox / --disable-setuid-sandbox: GH Actions Ubuntu has no
+      //    user namespaces, Chrome's sandbox can't init. Standard workaround.
+      //  --disable-blink-features=AutomationControlled: removes the
+      //    navigator.webdriver=true flag — the #1 signal bank WAFs use to
+      //    fingerprint headless Chrome.
+      //  --disable-dev-shm-usage: small /dev/shm in CI containers; without
+      //    this Chrome OOMs on heavy SPAs.
+      //  --window-size: matches a real desktop viewport.
+      //  --user-agent: identify as a recent stable Chrome on Windows
+      //    (matching what most home users actually browse from).
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-blink-features=AutomationControlled',
+        '--disable-dev-shm-usage',
+        '--window-size=1920,1080',
+        '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      ],
     });
 
     const result = await scraper.scrape(credentials);
