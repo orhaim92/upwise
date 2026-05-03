@@ -41,7 +41,7 @@ jobs:
       - name: Run sync
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
+          BANK_CREDS_KEY: ${{ secrets.BANK_CREDS_KEY }}
           NODE_ENV: production
         run: |
           if [ -n "${{ inputs.account_id }}" ]; then
