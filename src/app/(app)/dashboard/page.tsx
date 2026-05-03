@@ -1,15 +1,18 @@
 import Link from 'next/link';
 import { Plus, Sparkles } from 'lucide-react';
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { differenceInHours } from 'date-fns';
 import { auth } from '@/lib/auth/config';
 import { getUserHouseholdId } from '@/lib/auth/household';
 import { db } from '@/lib/db';
 import {
   accounts,
+  advisorInsights,
   households,
   recurringRules,
 } from '@/lib/db/schema';
+import { advisorEnabled } from '@/lib/features';
+import { InsightsStrip } from './_components/insights-strip';
 import { householdOldestSync } from '@/lib/scrapers/needs-sync';
 import { computeDailyAllowance } from '@/lib/cycles/daily-allowance';
 import { Card } from '@/components/ui/card';
@@ -33,7 +36,7 @@ export default async function DashboardPage() {
     .where(eq(households.id, householdId))
     .limit(1);
 
-  const [accountCount, oldestSync, pendingRules] = await Promise.all([
+  const [accountCount, oldestSync, pendingRules, insights] = await Promise.all([
     db
       .select({ id: accounts.id })
       .from(accounts)
@@ -50,6 +53,28 @@ export default async function DashboardPage() {
         ),
       )
       .then((r) => r.length),
+    advisorEnabled()
+      ? db
+          .select({
+            id: advisorInsights.id,
+            type: advisorInsights.type,
+            urgency: advisorInsights.urgency,
+            title: advisorInsights.title,
+            body: advisorInsights.body,
+          })
+          .from(advisorInsights)
+          .where(
+            and(
+              eq(advisorInsights.householdId, householdId),
+              eq(advisorInsights.status, 'new'),
+            ),
+          )
+          .orderBy(
+            desc(advisorInsights.urgency),
+            desc(advisorInsights.createdAt),
+          )
+          .limit(3)
+      : Promise.resolve([]),
   ]);
 
   if (accountCount === 0) {
@@ -95,6 +120,8 @@ export default async function DashboardPage() {
       </div>
 
       <StalenessBanner lastSync={oldestSync} />
+
+      <InsightsStrip insights={insights} />
 
       {pendingRules > 0 && (
         <Link
