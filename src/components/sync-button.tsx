@@ -43,6 +43,7 @@ export function SyncButton({
       const data = (await res.json().catch(() => ({}))) as {
         ok?: boolean;
         error?: string;
+        dispatched?: boolean;
         results?: SyncResultRow[];
       };
 
@@ -51,6 +52,15 @@ export function SyncButton({
         return;
       }
 
+      // New flow: sync runs in GitHub Actions. The endpoint just dispatches
+      // the workflow and returns immediately — results land in the DB ~1-2
+      // minutes later. The user refreshes the page to see updated data.
+      if (data.dispatched) {
+        toast.success(t.sync.syncDispatched);
+        return;
+      }
+
+      // Legacy in-process path (kept defensively in case the env reverts).
       const results = data.results ?? [];
       const totalInserted = results.reduce((sum, r) => sum + r.inserted, 0);
       const totalScraped = results.reduce((sum, r) => sum + r.scraped, 0);

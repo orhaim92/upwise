@@ -132,6 +132,7 @@ export const t = {
     neverSynced: 'עוד לא סונכרן',
     syncSuccess: 'הסנכרון הסתיים. נוספו {count} תנועות.',
     syncPartialSuccess: 'הסנכרון הסתיים עם שגיאות בחלק מהחשבונות.',
+    syncDispatched: 'הסנכרון התחיל ברקע. ייקח כדקה-שתיים. רענן את הדף כדי לראות תוצאות.',
     syncError: 'הסנכרון נכשל',
     errorInvalidPassword: 'סיסמה שגויה. עדכן את פרטי הגישה לחשבון.',
     errorChangePassword: 'הבנק דורש החלפת סיסמה. היכנס לאתר הבנק קודם.',

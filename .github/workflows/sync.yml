@@ -1,0 +1,53 @@
+name: Sync banks
+
+on:
+  # Nightly sweep — every household, every active account.
+  # 02:00 UTC ≈ 05:00 Israel (DST) / 04:00 (winter).
+  schedule:
+    - cron: '0 2 * * *'
+
+  # Manual trigger from the Vercel app's sync button (and from GH UI).
+  workflow_dispatch:
+    inputs:
+      household_id:
+        description: 'Sync only this household (optional)'
+        required: false
+        type: string
+      account_id:
+        description: 'Sync only this account (optional, takes precedence)'
+        required: false
+        type: string
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # israeli-bank-scrapers uses Puppeteer; the runner has no Chrome until
+      # we install one. Caches automatically across workflow runs.
+      - name: Install Chrome for Puppeteer
+        run: npx puppeteer browsers install chrome
+
+      - name: Run sync
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
+          NODE_ENV: production
+        run: |
+          if [ -n "${{ inputs.account_id }}" ]; then
+            npm run sync:all -- --account-id=${{ inputs.account_id }}
+          elif [ -n "${{ inputs.household_id }}" ]; then
+            npm run sync:all -- --household-id=${{ inputs.household_id }}
+          else
+            npm run sync:all
+          fi
