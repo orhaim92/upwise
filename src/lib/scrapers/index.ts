@@ -143,6 +143,12 @@ export async function scrapeAccount(params: {
       originalAmount?: number;
       description?: string;
       installments?: { number: number; total: number };
+      // israeli-bank-scrapers includes "completed" or "pending". Pending =
+      // not yet settled (e.g. Mizrahi's "חיוב ישראכרט עתידי" rows that are
+      // future-dated debits). We exclude these — they shouldn't show up as
+      // realized expenses, and they'll re-appear as completed once they
+      // actually clear, so there's no risk of losing data.
+      status?: string;
     };
 
     function pushTx(t: RawTx, mask: string | null, last4: string | null) {
@@ -179,12 +185,21 @@ export async function scrapeAccount(params: {
       }
       const rawTxs = (account.txns ?? []) as unknown as RawTx[];
       let kept = 0;
-      let skipped = 0;
+      let skippedDup = 0;
+      let skippedPending = 0;
       for (const t of rawTxs) {
+        // Drop pending / not-yet-cleared transactions. Mizrahi returns
+        // "חיוב ישראכרט עתידי" (future Isracard charge) as pending rows
+        // with positive amounts; storing them shows phantom income today
+        // and double-counts when they later clear as completed.
+        if (t.status && t.status !== 'completed') {
+          skippedPending++;
+          continue;
+        }
         const amount = t.chargedAmount ?? t.originalAmount ?? 0;
         const contentKey = `${t.date}|${amount}|${t.description ?? ''}`;
         if (seen.has(contentKey)) {
-          skipped++;
+          skippedDup++;
           continue;
         }
         seen.add(contentKey);
@@ -193,7 +208,7 @@ export async function scrapeAccount(params: {
       }
       if (process.env.NODE_ENV !== 'production') {
         console.log(
-          `[scrape:${params.provider}] account ${mask ?? '?'} (last4=${last4 ?? 'n/a'}) → ${rawTxs.length} txns (kept ${kept}, skipped ${skipped} cross-account dups)`,
+          `[scrape:${params.provider}] account ${mask ?? '?'} (last4=${last4 ?? 'n/a'}) → ${rawTxs.length} txns (kept ${kept}, dup ${skippedDup}, pending ${skippedPending})`,
         );
       }
     }

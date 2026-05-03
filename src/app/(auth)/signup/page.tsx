@@ -4,9 +4,10 @@ import { Suspense, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { signIn } from 'next-auth/react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
+import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -22,7 +23,6 @@ export default function SignupPage() {
 }
 
 function SignupForm() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const [submitting, setSubmitting] = useState(false);
 
@@ -49,43 +49,42 @@ function SignupForm() {
 
   async function onSubmit(values: SignupInput) {
     setSubmitting(true);
-    try {
-      const res = await fetch('/api/auth/signup', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          ...values,
-          ...(inviteToken ? { inviteToken } : {}),
-        }),
-      });
+    const res = await fetch('/api/auth/signup', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        ...values,
+        ...(inviteToken ? { inviteToken } : {}),
+      }),
+    });
 
-      if (!res.ok) {
-        const data = (await res.json().catch(() => null)) as
-          | { error?: string }
-          | null;
-        const message =
-          (typeof data?.error === 'string' && data.error) || t.auth.signupFailed;
-        toast.error(message);
-        return;
-      }
-
-      const signinResult = await signIn('credentials', {
-        email: values.email,
-        password: values.password,
-        redirect: false,
-      });
-
-      if (signinResult?.error) {
-        toast.error(t.auth.invalidCredentials);
-        return;
-      }
-
-      toast.success(t.auth.signupSuccess);
-      router.push(redirectTo);
-      router.refresh();
-    } finally {
+    if (!res.ok) {
+      const data = (await res.json().catch(() => null)) as
+        | { error?: string }
+        | null;
+      const message =
+        (typeof data?.error === 'string' && data.error) || t.auth.signupFailed;
+      toast.error(message);
       setSubmitting(false);
+      return;
     }
+
+    const signinResult = await signIn('credentials', {
+      email: values.email,
+      password: values.password,
+      redirect: false,
+    });
+
+    if (signinResult?.error) {
+      toast.error(t.auth.invalidCredentials);
+      setSubmitting(false);
+      return;
+    }
+
+    toast.success(t.auth.signupSuccess);
+    // Hard navigation — see same comment in login/page.tsx. router.push
+    // races the session-cookie set; window.location.assign avoids it.
+    window.location.assign(redirectTo);
   }
 
   return (
@@ -154,6 +153,7 @@ function SignupForm() {
           disabled={submitting}
           className="w-full bg-violet-600 text-white hover:bg-violet-700"
         >
+          {submitting && <Loader2 className="size-4 animate-spin" />}
           {submitting ? t.common.loading : t.auth.signupButton}
         </Button>
       </form>

@@ -4,9 +4,10 @@ import { Suspense, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { signIn } from 'next-auth/react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
+import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -22,7 +23,6 @@ export default function LoginPage() {
 }
 
 function LoginForm() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const redirectTo = searchParams.get('redirect') ?? '/dashboard';
   const [submitting, setSubmitting] = useState(false);
@@ -42,14 +42,21 @@ function LoginForm() {
       password: values.password,
       redirect: false,
     });
-    setSubmitting(false);
 
     if (result?.error) {
       toast.error(t.auth.invalidCredentials);
+      setSubmitting(false);
       return;
     }
-    router.push(redirectTo);
-    router.refresh();
+
+    // Hard navigation so the new session cookie is included in the next
+    // request. router.push() races the cookie set: the middleware on the
+    // destination page sometimes doesn't see the session yet, redirects to
+    // /login, and the user has to click again. window.location.assign is
+    // synchronous from the browser's perspective and guarantees the cookie
+    // is sent. We keep `submitting` true so the spinner stays visible until
+    // the navigation actually starts.
+    window.location.assign(redirectTo);
   }
 
   return (
@@ -101,6 +108,7 @@ function LoginForm() {
           disabled={submitting}
           className="w-full bg-violet-600 text-white hover:bg-violet-700"
         >
+          {submitting && <Loader2 className="size-4 animate-spin" />}
           {submitting ? t.common.loading : t.auth.loginButton}
         </Button>
       </form>

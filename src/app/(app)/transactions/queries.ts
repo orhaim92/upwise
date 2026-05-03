@@ -43,7 +43,7 @@ export type TransactionRowGrouped = TransactionRow & {
 export type TransactionFilters = {
   startDate?: string;
   endDate?: string;
-  accountId?: string;
+  accountIds?: string[];
   categoryKey?: string;
   type?: 'all' | 'income' | 'expense';
   search?: string;
@@ -60,8 +60,12 @@ export async function listTransactions(
 
   if (filters.startDate) conds.push(gte(transactions.date, filters.startDate));
   if (filters.endDate) conds.push(lte(transactions.date, filters.endDate));
-  if (filters.accountId) {
-    conds.push(eq(transactions.accountId, filters.accountId));
+  if (filters.accountIds && filters.accountIds.length > 0) {
+    const inList = sql.join(
+      filters.accountIds.map((id) => sql`${id}`),
+      sql`, `,
+    );
+    conds.push(sql`${transactions.accountId} IN (${inList})`);
   }
   if (filters.type === 'income') {
     conds.push(sql`${transactions.amount} > 0`);
@@ -70,11 +74,31 @@ export async function listTransactions(
     conds.push(sql`${transactions.amount} < 0`);
   }
   if (filters.search && filters.search.trim()) {
-    const q = `%${filters.search.trim()}%`;
-    const searchCond = or(
+    const raw = filters.search.trim();
+    const q = `%${raw}%`;
+    // Three search dimensions:
+    //   1. Free-text in description / rawDescription (ILIKE substring)
+    //   2. CC last4 (4 consecutive digits anywhere in the search OR
+    //      a 4-digit term — match against transactions.cardLastFour)
+    //   3. Numeric — if the term parses as a number, match abs(amount)
+    //      EXACTLY (parseFloat tolerates currency symbols + commas already
+    //      stripped below).
+    const conditions = [
       ilike(transactions.description, q),
       ilike(transactions.rawDescription, q),
-    );
+    ];
+
+    const fourDigit = raw.match(/\b(\d{4})\b/)?.[1];
+    if (fourDigit) {
+      conditions.push(eq(transactions.cardLastFour, fourDigit));
+    }
+
+    const numeric = parseFloat(raw.replace(/[^\d.\-]/g, ''));
+    if (Number.isFinite(numeric) && numeric !== 0) {
+      conditions.push(sql`abs(${transactions.amount}) = ${numeric.toFixed(2)}`);
+    }
+
+    const searchCond = or(...conditions);
     if (searchCond) conds.push(searchCond);
   }
   if (!filters.includeTransfers) {

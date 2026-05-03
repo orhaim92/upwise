@@ -14,7 +14,7 @@ type Props = {
   searchParams: Promise<{
     startDate?: string;
     endDate?: string;
-    accountId?: string;
+    accountIds?: string;
     type?: string;
     search?: string;
     showSpecial?: string;
@@ -27,10 +27,13 @@ export default async function TransactionsPage({ searchParams }: Props) {
   const params = await searchParams;
 
   const showSpecial = params.showSpecial === '1';
+  const accountIds = params.accountIds
+    ? params.accountIds.split(',').filter(Boolean)
+    : undefined;
   const filters = {
     startDate: params.startDate,
     endDate: params.endDate,
-    accountId: params.accountId,
+    accountIds,
     type: params.type as 'income' | 'expense' | 'all' | undefined,
     search: params.search,
     includeTransfers: showSpecial,
