@@ -64,6 +64,13 @@
       "when": 1777558707467,
       "tag": "0008_curved_penance",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1777809883186,
+      "tag": "0009_neat_puppet_master",
+      "breakpoints": true
     }
   ]
 }

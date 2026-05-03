@@ -240,10 +240,107 @@ export const whatsappSubscriptions = pgTable('whatsapp_subscriptions', {
   sendTimeLocal: time('send_time_local').notNull().default('09:00:00'),
   lastSentAt: timestamp('last_sent_at', { withTimezone: true }),
   optedOutAt: timestamp('opted_out_at', { withTimezone: true }),
+  // Phase 6: opt-in for high-urgency advisor insight alerts (urgency >= 8
+  // pushes a WhatsApp message in addition to landing on the dashboard).
+  insightAlertsEnabled: boolean('insight_alerts_enabled')
+    .notNull()
+    .default(true),
   createdAt: timestamp('created_at', { withTimezone: true })
     .defaultNow()
     .notNull(),
 });
+
+// Phase 6: scheduled financial events the user has flagged (vacation,
+// large purchase, income change). Currently used as a record only — the
+// advisor's `simulateEvent` tool computes impact ad-hoc. May feed
+// future planning views.
+export const financialEvents = pgTable('financial_events', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  householdId: uuid('household_id')
+    .notNull()
+    .references(() => households.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  eventType: text('event_type', {
+    enum: ['vacation', 'large_purchase', 'income_change', 'one_time_expense'],
+  }).notNull(),
+  date: date('date').notNull(),
+  amount: numeric('amount', { precision: 12, scale: 2 }).notNull(),
+  description: text('description').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
+
+// Phase 6: chat sessions with the AI advisor. One conversation aggregates
+// many messages; first user message becomes the title.
+export const advisorConversations = pgTable(
+  'advisor_conversations',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    householdId: uuid('household_id')
+      .notNull()
+      .references(() => households.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    title: text('title'),
+    lastMessageAt: timestamp('last_message_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    index('idx_advisor_conv_user').on(t.userId, t.lastMessageAt.desc()),
+  ],
+);
+
+export const advisorMessages = pgTable(
+  'advisor_messages',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => advisorConversations.id, { onDelete: 'cascade' }),
+    role: text('role', { enum: ['user', 'assistant', 'system'] }).notNull(),
+    content: text('content').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [index('idx_advisor_msg_conv').on(t.conversationId, t.createdAt)],
+);
+
+// Phase 6: proactive findings produced by the daily insights cron.
+export const advisorInsights = pgTable(
+  'advisor_insights',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    householdId: uuid('household_id')
+      .notNull()
+      .references(() => households.id, { onDelete: 'cascade' }),
+    type: text('type').notNull(),
+    urgency: integer('urgency').notNull().default(5),
+    title: text('title').notNull(),
+    body: text('body').notNull(),
+    status: text('status', { enum: ['new', 'dismissed', 'acted_on'] })
+      .notNull()
+      .default('new'),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    index('idx_advisor_insights_household').on(
+      t.householdId,
+      t.status,
+      t.createdAt.desc(),
+    ),
+  ],
+);
 
 export const transactions = pgTable(
   'transactions',

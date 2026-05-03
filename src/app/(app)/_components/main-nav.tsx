@@ -3,19 +3,20 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Menu, X } from 'lucide-react';
+import { Menu, Sparkles, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { t } from '@/lib/i18n/he';
 
-type NavLink = { href: string; label: string };
+type NavLink = { href: string; label: string; ai?: boolean };
 
 type Props = {
   userName: string | null | undefined;
   signOutForm: React.ReactNode;
+  advisorEnabled: boolean;
 };
 
-export function MainNav({ userName, signOutForm }: Props) {
+export function MainNav({ userName, signOutForm, advisorEnabled }: Props) {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
 
@@ -25,6 +26,9 @@ export function MainNav({ userName, signOutForm }: Props) {
     { href: '/recurring', label: t.recurring.title },
     { href: '/goals', label: t.goals.title },
     { href: '/accounts', label: t.accounts.title },
+    ...(advisorEnabled
+      ? [{ href: '/advisor', label: t.advisor.title, ai: true }]
+      : []),
     { href: '/settings', label: t.settings.title },
   ];
 
@@ -46,12 +50,13 @@ export function MainNav({ userName, signOutForm }: Props) {
                   key={l.href}
                   href={l.href}
                   className={cn(
-                    'transition-colors',
+                    'inline-flex items-center gap-1 transition-colors',
                     pathname === l.href
                       ? 'text-violet-600 font-medium'
                       : 'text-slate-700 hover:text-violet-600',
                   )}
                 >
+                  {l.ai && <Sparkles className="size-3.5" />}
                   {l.label}
                 </Link>
               ))}
@@ -89,12 +94,13 @@ export function MainNav({ userName, signOutForm }: Props) {
                   href={l.href}
                   onClick={() => setOpen(false)}
                   className={cn(
-                    'rounded-lg px-3 py-2 transition-colors',
+                    'inline-flex items-center gap-1.5 rounded-lg px-3 py-2 transition-colors',
                     pathname === l.href
                       ? 'bg-violet-50 text-violet-700 font-medium'
                       : 'text-slate-700 hover:bg-slate-50',
                   )}
                 >
+                  {l.ai && <Sparkles className="size-3.5" />}
                   {l.label}
                 </Link>
               ))}
