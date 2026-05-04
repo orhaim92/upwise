@@ -2,6 +2,8 @@ import { redirect } from 'next/navigation';
 import { auth, signOut } from '@/lib/auth/config';
 import { Button } from '@/components/ui/button';
 import { MainNav } from './_components/main-nav';
+import { OfflineBanner } from '@/components/pwa/offline-banner';
+import { InstallPrompt } from '@/components/pwa/install-prompt';
 import { advisorEnabled } from '@/lib/features';
 import { t } from '@/lib/i18n/he';
 
@@ -39,6 +41,8 @@ export default async function AppLayout({
       <main className="flex-1 max-w-6xl mx-auto w-full p-4 md:p-6">
         {children}
       </main>
+      <OfflineBanner />
+      <InstallPrompt />
     </div>
   );
 }

@@ -1,6 +1,7 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { Rubik } from 'next/font/google';
 import { Toaster } from '@/components/ui/sonner';
+import { ServiceWorkerRegister } from '@/components/pwa/sw-register';
 import { t } from '@/lib/i18n/he';
 import './globals.css';
 
@@ -13,6 +14,24 @@ const rubik = Rubik({
 export const metadata: Metadata = {
   title: `${t.brand.name} — ${t.brand.tagline}`,
   description: 'אפליקציית ניהול תזרים מזומנים אישי',
+  manifest: '/manifest.webmanifest',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: t.brand.name,
+    startupImage: [{ url: '/icons/apple-touch-icon-180.png' }],
+  },
+  icons: {
+    icon: '/favicon.png',
+    apple: '/icons/apple-touch-icon-180.png',
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: '#7C3AED',
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 5,
 };
 
 export default function RootLayout({
@@ -28,6 +47,7 @@ export default function RootLayout({
       >
         {children}
         <Toaster position="top-center" richColors />
+        <ServiceWorkerRegister />
       </body>
     </html>
   );

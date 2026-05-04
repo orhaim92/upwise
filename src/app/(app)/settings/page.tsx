@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { eq } from 'drizzle-orm';
-import { Users, MessageCircle, ChevronLeft } from 'lucide-react';
+import { Bell, Users, MessageCircle, ChevronLeft } from 'lucide-react';
 import { auth } from '@/lib/auth/config';
 import { getUserHouseholdId } from '@/lib/auth/household';
 import { db } from '@/lib/db';
@@ -81,6 +81,21 @@ export default async function SettingsPage() {
             <h2 className="font-semibold">{t.whatsapp.title}</h2>
             <p className="text-sm text-slate-600 mt-0.5">
               {t.whatsapp.subtitle}
+            </p>
+          </div>
+          <ChevronLeft className="size-5 text-slate-400 group-hover:text-slate-600 shrink-0" />
+        </Card>
+      </Link>
+
+      <Link href="/settings/push" className="block group">
+        <Card className="p-5 flex items-center gap-4 hover:bg-slate-50 transition-colors">
+          <div className="size-10 rounded-lg bg-violet-100 text-violet-700 flex items-center justify-center shrink-0">
+            <Bell className="size-5" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2 className="font-semibold">{t.push.title}</h2>
+            <p className="text-sm text-slate-600 mt-0.5">
+              {t.push.subtitle}
             </p>
           </div>
           <ChevronLeft className="size-5 text-slate-400 group-hover:text-slate-600 shrink-0" />

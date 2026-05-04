@@ -2,7 +2,7 @@ import { createHash } from 'crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import { format } from 'date-fns';
 import { db } from '@/lib/db';
-import { accounts, transactions } from '@/lib/db/schema';
+import { accounts, households, transactions } from '@/lib/db/schema';
 import { scrapeAccount, type ScrapedTransaction } from './index';
 import {
   normalizeDescription,
@@ -16,6 +16,9 @@ import { linkTransactionsToRules } from '@/lib/recurring/link';
 import { detectInternalTransfers } from '@/lib/transactions/detect-transfers';
 import { detectCreditCardAggregates } from '@/lib/transactions/detect-cc-aggregates';
 import { autoCategorizeTransactions } from '@/lib/transactions/auto-categorize';
+import { computeDailyAllowance } from '@/lib/cycles/daily-allowance';
+import { sendPushToHousehold } from '@/lib/pwa/push-server';
+import { formatILS } from '@/lib/format';
 
 // Composite dedup key. Always includes the bank's identifier (if present) PLUS
 // content fields, so we survive scrapers that reuse the same identifier across
@@ -206,6 +209,63 @@ export async function syncAllAccounts(
     await linkTransactionsToRules(householdId);
   } catch (err) {
     console.error('Post-sync processing failed:', err);
+  }
+
+  // ===== Post-sync push notifications =====
+  // Run after all post-processors so the allowance reflects the latest
+  // categorization / transfer detection / aggregation. Each push type is
+  // independently best-effort — failures here must NOT poison the sync
+  // result the caller is waiting on.
+  try {
+    const [hh] = await db
+      .select()
+      .from(households)
+      .where(eq(households.id, householdId))
+      .limit(1);
+    if (hh) {
+      const allowance = await computeDailyAllowance(
+        householdId,
+        hh.billingCycleStartDay,
+      );
+      if (allowance.isOverBudget) {
+        await sendPushToHousehold(householdId, 'lowBalanceEnabled', {
+          title: '⚠️ חרגת מהתקציב',
+          body: `אתה ${formatILS(Math.abs(allowance.availableToSpend))} מעל הזמין במחזור.`,
+          url: '/dashboard',
+          tag: 'low-balance',
+          requireInteraction: true,
+        });
+      } else if (allowance.isLowBalance) {
+        await sendPushToHousehold(householdId, 'lowBalanceEnabled', {
+          title: '⚠️ יתרה זמינה נמוכה',
+          body: `נותרו ${formatILS(allowance.availableToSpend)} ל-${allowance.cycle.daysRemaining} ימים.`,
+          url: '/dashboard',
+          tag: 'low-balance',
+        });
+      }
+    }
+  } catch (err) {
+    console.error('Low-balance push check failed:', err);
+  }
+
+  // Sync-completion notification (default-off pref — opt in only).
+  // Skip noisy zero-change syncs.
+  try {
+    const totalInserted = results.reduce((s, r) => s + r.inserted, 0);
+    const errCount = results.filter((r) => r.status === 'error').length;
+    if (totalInserted > 0 || errCount > 0) {
+      await sendPushToHousehold(householdId, 'syncCompletionEnabled', {
+        title: 'סנכרון הסתיים',
+        body:
+          errCount > 0
+            ? `נוספו ${totalInserted} תנועות. ${errCount} חשבונות נכשלו.`
+            : `נוספו ${totalInserted} תנועות.`,
+        url: '/transactions',
+        tag: 'sync-complete',
+      });
+    }
+  } catch (err) {
+    console.error('Sync-completion push failed:', err);
   }
 
   return results;

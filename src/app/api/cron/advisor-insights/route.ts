@@ -12,6 +12,7 @@ import {
 } from '@/lib/db/schema';
 import { advisorEnabled } from '@/lib/features';
 import { sendWhatsApp } from '@/lib/twilio/client';
+import { sendPushToHousehold } from '@/lib/pwa/push-server';
 import { withTenantContext } from '@/lib/advisor/wrap-tool';
 import { getCashFlowSummary } from '@/lib/advisor/tools/cash-flow-summary';
 import { getSpendingByCategory } from '@/lib/advisor/tools/spending-by-category';
@@ -185,9 +186,28 @@ export async function GET(req: Request) {
 
       results.push({ householdId: hh.id, insight: true });
 
-      // Push to WhatsApp only for genuinely urgent stuff. Subscribers must
-      // be both verified AND have insight_alerts_enabled (separate from
-      // the daily-digest opt-in).
+      // Native push fires at lower threshold than WhatsApp — push is less
+      // intrusive (silent if device is muted, easy to swipe away), so we
+      // surface medium-urgency findings there too. Tag with insight type
+      // so a follow-up insight of the same kind replaces the prior one
+      // instead of stacking.
+      if (urgency >= 6) {
+        try {
+          await sendPushToHousehold(hh.id, 'insightsEnabled', {
+            title:
+              urgency >= 8 ? `⚠️ ${parsed.title}` : `💡 ${parsed.title}`,
+            body: parsed.body.slice(0, 200),
+            url: '/dashboard',
+            tag: `insight-${parsed.type}`,
+            requireInteraction: urgency >= 8,
+          });
+        } catch (err) {
+          console.error('Insight push failed:', err);
+        }
+      }
+
+      // WhatsApp stays at the higher 8+ threshold — it's a more disruptive
+      // channel (vibrates, shows in chat list, can't easily be dismissed).
       if (urgency >= 8) {
         const subs = await db
           .select({

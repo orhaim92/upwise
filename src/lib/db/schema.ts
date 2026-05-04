@@ -314,6 +314,49 @@ export const advisorMessages = pgTable(
   (t) => [index('idx_advisor_msg_conv').on(t.conversationId, t.createdAt)],
 );
 
+// Phase 7: per-device PushSubscription records for native web push.
+// One row per (user, device/browser endpoint). Endpoint is unique because
+// the browser's PushManager assigns a globally-unique URL per subscription.
+//
+// `failureCount` tracks consecutive send failures; once it hits 5 (or we
+// see a 404/410 from the push service), the row is deleted. This auto-
+// prunes stale subscriptions without needing an external sweep.
+export const pushSubscriptions = pgTable(
+  'push_subscriptions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    endpoint: text('endpoint').notNull(),
+    p256dh: text('p256dh').notNull(),
+    auth: text('auth').notNull(),
+    userAgent: text('user_agent'),
+    deviceLabel: text('device_label'),
+    // Per-device notification preferences. Default-on for the digest +
+    // alerts (intent: most users want them) and default-off for sync
+    // completion (less universally wanted, can be noisy after every sync).
+    dailyDigestEnabled: boolean('daily_digest_enabled').notNull().default(true),
+    lowBalanceEnabled: boolean('low_balance_enabled').notNull().default(true),
+    insightsEnabled: boolean('insights_enabled').notNull().default(true),
+    syncCompletionEnabled: boolean('sync_completion_enabled')
+      .notNull()
+      .default(false),
+    sendTimeLocal: time('send_time_local').notNull().default('09:00:00'),
+    lastDigestSentAt: timestamp('last_digest_sent_at', {
+      withTimezone: true,
+    }),
+    failureCount: integer('failure_count').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    unique('push_sub_endpoint_unique').on(t.endpoint),
+    index('idx_push_user').on(t.userId),
+  ],
+);
+
 // Phase 6: proactive findings produced by the daily insights cron.
 export const advisorInsights = pgTable(
   'advisor_insights',
