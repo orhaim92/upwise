@@ -232,8 +232,13 @@ export async function POST(req: Request) {
 
     replyText = result.text || '🤔 לא הצלחתי לענות. נסה שוב.';
   } catch (err) {
-    console.error('Advisor WhatsApp error:', err);
-    replyText = 'שגיאה זמנית. נסה שוב בעוד רגע.';
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error('Advisor WhatsApp error:', detail, err);
+    // Surface the underlying cause so prod debugging doesn't require log
+    // diving for every failed message. Truncate so we don't blow Twilio's
+    // 1500-char limit with a giant stack trace.
+    const short = detail.slice(0, 250);
+    replyText = `שגיאה זמנית: ${short}\nנסה שוב בעוד רגע.`;
   }
 
   // WhatsApp soft-limits free-form messages to ~1600 chars; truncate to be

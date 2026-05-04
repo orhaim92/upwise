@@ -218,8 +218,13 @@ export function ChatPanel({ conversations }: Props) {
               </div>
             )}
           {error && (
-            <div className="text-sm text-rose-600 p-3 bg-rose-50 rounded-lg">
-              {t.advisor.errorGeneric}
+            <div className="text-sm text-rose-600 p-3 bg-rose-50 rounded-lg space-y-1">
+              <div className="font-medium">{t.advisor.errorGeneric}</div>
+              {error.message && (
+                <div className="text-xs opacity-80 font-mono break-words">
+                  {error.message}
+                </div>
+              )}
             </div>
           )}
         </div>

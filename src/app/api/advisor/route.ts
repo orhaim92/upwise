@@ -168,5 +168,15 @@ export async function POST(req: Request) {
     stopWhen: stepCountIs(6),
   });
 
-  return result.toUIMessageStreamResponse();
+  return result.toUIMessageStreamResponse({
+    // Forward the actual error message to the client. Default behavior
+    // masks all stream errors to "An error occurred" for security; for our
+    // single-tenant personal-use app, surfacing the real cause (Gemini
+    // rate-limit, tool schema mismatch, etc.) is far more useful than the
+    // tiny info-leak risk.
+    onError: (err) => {
+      console.error('Advisor stream error:', err);
+      return err instanceof Error ? err.message : String(err);
+    },
+  });
 }
