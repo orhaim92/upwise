@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ArrowLeftRight,
@@ -29,6 +29,7 @@ import { cn } from '@/lib/utils';
 import { t } from '@/lib/i18n/he';
 import type { TransactionRow } from '../queries';
 import {
+  findSimilarUncategorizedTransactions,
   linkTransactionToRule,
   setTransactionCategory,
   toggleSpecialFlag,
@@ -37,6 +38,10 @@ import {
 import { LinkRuleDialog } from './link-rule-dialog';
 import { MarkAsCardStatementDialog } from './mark-as-card-statement-dialog';
 import { CreateRuleFromTxDialog } from './create-rule-from-tx-dialog';
+import {
+  ApplyToSimilarDialog,
+  type SimilarTransaction,
+} from './apply-to-similar-dialog';
 
 type Category = {
   id: string;
@@ -49,9 +54,19 @@ type Props = {
   tx: TransactionRow;
   categories: Category[];
   compact?: boolean;
+  onBulkApplied?: (
+    ids: string[],
+    categoryKey: string,
+    categoryIcon: string | null,
+  ) => void;
 };
 
-export function TransactionRowCard({ tx, categories, compact }: Props) {
+export function TransactionRowCard({
+  tx,
+  categories,
+  compact,
+  onBulkApplied,
+}: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [linkOpen, setLinkOpen] = useState(false);
@@ -60,6 +75,29 @@ export function TransactionRowCard({ tx, categories, compact }: Props) {
   const [optimisticIcon, setOptimisticIcon] = useState<string | null>(
     tx.categoryIcon,
   );
+
+  // Re-sync optimistic icon when the parent updates this tx's categoryIcon
+  // — happens when a sibling row's bulk-apply patches our row in the table.
+  // Without this, we'd keep showing the stale icon (📦) even though the
+  // parent has the new category in its row state.
+  useEffect(() => {
+    setOptimisticIcon(tx.categoryIcon);
+  }, [tx.categoryIcon]);
+
+  // "Apply to similar" dialog state — populated only after a successful pick
+  // that found at least one matching uncategorized transaction.
+  const [similarMatches, setSimilarMatches] = useState<SimilarTransaction[]>(
+    [],
+  );
+  const [similarOpen, setSimilarOpen] = useState(false);
+  const [similarCategoryId, setSimilarCategoryId] = useState<string | null>(
+    null,
+  );
+  const [similarCategoryKey, setSimilarCategoryKey] = useState('');
+  const [similarCategoryIcon, setSimilarCategoryIcon] = useState<string | null>(
+    null,
+  );
+  const [similarCategoryLabel, setSimilarCategoryLabel] = useState('');
 
   const amount = parseFloat(tx.amount);
   const isExpense = amount < 0;
@@ -78,6 +116,32 @@ export function TransactionRowCard({ tx, categories, compact }: Props) {
         return;
       }
       toast.success(t.transactions.categoryUpdated);
+
+      // After assigning a category, look for OTHER uncategorized transactions
+      // with the same description and offer to apply the same category to
+      // them. Skipped when clearing (categoryId=null) or picking the same
+      // category that's already on the row (no-op).
+      if (!categoryId) return;
+      const cat = categories.find((c) => c.id === categoryId);
+      if (!cat || cat.key === tx.categoryKey) return;
+
+      const lookup = await findSimilarUncategorizedTransactions({
+        transactionId: tx.id,
+      });
+      if (!lookup.ok) {
+        toast.error(lookup.error ?? t.common.error);
+        return;
+      }
+      if (!lookup.transactions || lookup.transactions.length === 0) return;
+
+      setSimilarMatches(lookup.transactions);
+      setSimilarCategoryId(categoryId);
+      setSimilarCategoryKey(cat.key);
+      setSimilarCategoryIcon(icon);
+      setSimilarCategoryLabel(
+        (t.categoryLabels as Record<string, string>)[cat.key] ?? cat.key,
+      );
+      setSimilarOpen(true);
     });
   }
 
@@ -326,6 +390,18 @@ export function TransactionRowCard({ tx, categories, compact }: Props) {
         open={createRuleOpen}
         onOpenChange={setCreateRuleOpen}
       />
+      {similarOpen && similarCategoryId && (
+        <ApplyToSimilarDialog
+          open={similarOpen}
+          onOpenChange={setSimilarOpen}
+          categoryId={similarCategoryId}
+          categoryKey={similarCategoryKey}
+          categoryIcon={similarCategoryIcon}
+          categoryLabel={similarCategoryLabel}
+          matches={similarMatches}
+          onBulkApplied={onBulkApplied}
+        />
+      )}
     </>
   );
 }

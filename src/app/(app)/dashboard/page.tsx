@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { Plus, Sparkles } from 'lucide-react';
 import { and, desc, eq } from 'drizzle-orm';
-import { differenceInHours } from 'date-fns';
+import { differenceInHours, format, subMonths } from 'date-fns';
 import { auth } from '@/lib/auth/config';
 import { getUserHouseholdId } from '@/lib/auth/household';
 import { db } from '@/lib/db';
@@ -15,6 +15,17 @@ import { advisorEnabled } from '@/lib/features';
 import { InsightsStrip } from './_components/insights-strip';
 import { householdOldestSync } from '@/lib/scrapers/needs-sync';
 import { computeDailyAllowance } from '@/lib/cycles/daily-allowance';
+import {
+  formatCycleRange,
+  getActiveBillingCycle,
+} from '@/lib/cycles/billing-cycle';
+import {
+  getCurrentCycleSpendByCategory,
+  getCycleForecast,
+  getMonthOverMonthDiff,
+  getMonthlyTrend,
+  rangeToMonths,
+} from '@/lib/charts/queries';
 import { Card } from '@/components/ui/card';
 import { buttonVariants } from '@/components/ui/button';
 import { SyncButton } from '@/components/sync-button';
@@ -24,11 +35,33 @@ import { template } from '@/lib/format';
 import { STALENESS_HOURS } from '@/lib/constants';
 import { AllowanceHero } from './_components/allowance-hero';
 import { CycleMathCard } from './_components/cycle-math-card';
+import { DashboardCharts } from './_components/dashboard-charts';
+import type { ChartRange } from './_components/range-picker';
 import { t } from '@/lib/i18n/he';
 
-export default async function DashboardPage() {
+type Props = {
+  searchParams: Promise<{ range?: string; cycleOffset?: string }>;
+};
+
+// Hard cap on backwards navigation. 24 months of history is already past the
+// useful debugging window for a personal finance app, and bounding the offset
+// stops a malformed URL from running 1000 cycle queries.
+const MAX_CYCLE_OFFSET_BACK = 24;
+
+export default async function DashboardPage({ searchParams }: Props) {
   const session = await auth();
   const householdId = await getUserHouseholdId(session!.user.id);
+  const params = await searchParams;
+  const range: ChartRange =
+    params.range === '3m' || params.range === '12m' ? params.range : '6m';
+
+  // Negative integer = N cycles back. Forward navigation is intentionally
+  // disallowed (offset is clamped to <= 0) — there's no useful "future cycle"
+  // chart since none of the data exists yet.
+  const rawOffset = parseInt(params.cycleOffset ?? '0', 10);
+  const cycleOffset = Number.isFinite(rawOffset)
+    ? Math.max(-MAX_CYCLE_OFFSET_BACK, Math.min(0, rawOffset))
+    : 0;
 
   const [household] = await db
     .select()
@@ -107,6 +140,42 @@ export default async function DashboardPage() {
     !oldestSync ||
     differenceInHours(new Date(), oldestSync) >= STALENESS_HOURS;
 
+  const today = new Date();
+
+  // The dashboard's allowance/math card always pins to the *current* cycle.
+  // The donut + forecast charts target a navigable cycle (offset 0 is current,
+  // negative goes back through history). Trend/diff are intrinsically
+  // multi-month and ignore the offset.
+  const isCurrentCycle = cycleOffset === 0;
+  const chartCycle = isCurrentCycle
+    ? allowance.cycle
+    : getActiveBillingCycle(
+        household.billingCycleStartDay,
+        subMonths(today, -cycleOffset),
+      );
+
+  // For past cycles, "today" for the forecast = end-of-cycle so every day in
+  // the chart counts as realized (no projection band). For the current cycle
+  // we keep actual `today` so the projection picks up where actuals end.
+  const forecastToday = isCurrentCycle ? today : chartCycle.endDate;
+
+  const [donutSlices, forecastPoints, trendData, diffData] = await Promise.all([
+    getCurrentCycleSpendByCategory(householdId, chartCycle),
+    getCycleForecast(householdId, chartCycle, forecastToday),
+    getMonthlyTrend(householdId, rangeToMonths(range)),
+    getMonthOverMonthDiff(householdId, today),
+  ]);
+
+  // Budget reference line: realized + still-scheduled recurring. Only valid
+  // for the current cycle — past cycles are fully realized, so the line
+  // would just sit at the actual peak (redundant). Pass undefined to skip it.
+  const forecastExpectedTotal = isCurrentCycle
+    ? allowance.expensesRealizedToDate +
+      allowance.expectedRemainingRecurringExpenses
+    : undefined;
+  const forecastTodayLabel = isCurrentCycle ? format(today, 'd.M') : undefined;
+  const cycleRangeLabel = formatCycleRange(chartCycle);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-4">
@@ -140,6 +209,18 @@ export default async function DashboardPage() {
       <AllowanceHero allowance={allowance} isStale={isStale} />
 
       <CycleMathCard allowance={allowance} />
+
+      <DashboardCharts
+        donutSlices={donutSlices}
+        forecastPoints={forecastPoints}
+        forecastExpectedTotal={forecastExpectedTotal}
+        forecastTodayLabel={forecastTodayLabel}
+        trendData={trendData}
+        diffData={diffData}
+        initialRange={range}
+        cycleOffset={cycleOffset}
+        cycleRangeLabel={cycleRangeLabel}
+      />
     </div>
   );
 }

@@ -19,8 +19,16 @@ import {
 } from '@/components/ui/popover';
 import { t } from '@/lib/i18n/he';
 
+type Category = {
+  id: string;
+  key: string;
+  icon: string | null;
+  color: string | null;
+};
+
 type Props = {
   accounts: { id: string; displayName: string }[];
+  categories: Category[];
 };
 
 const TYPE_LABELS: Record<string, string> = {
@@ -29,7 +37,9 @@ const TYPE_LABELS: Record<string, string> = {
   expense: '',
 };
 
-export function TransactionsFilters({ accounts }: Props) {
+const UNCATEGORIZED_KEY = 'uncategorized';
+
+export function TransactionsFilters({ accounts, categories }: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
@@ -39,6 +49,10 @@ export function TransactionsFilters({ accounts }: Props) {
   TYPE_LABELS.all = t.transactions.filterTypeAll;
   TYPE_LABELS.income = t.transactions.filterTypeIncome;
   TYPE_LABELS.expense = t.transactions.filterTypeExpense;
+
+  const categoryLabels =
+    (t as unknown as { categoryLabels?: Record<string, string> })
+      .categoryLabels ?? {};
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -70,6 +84,18 @@ export function TransactionsFilters({ accounts }: Props) {
     router.replace(`${pathname}?${nextParams.toString()}`);
   }
 
+  function toggleCategory(key: string) {
+    const current =
+      params.get('categoryKeys')?.split(',').filter(Boolean) ?? [];
+    const next = current.includes(key)
+      ? current.filter((x) => x !== key)
+      : [...current, key];
+    const nextParams = new URLSearchParams(params);
+    if (next.length > 0) nextParams.set('categoryKeys', next.join(','));
+    else nextParams.delete('categoryKeys');
+    router.replace(`${pathname}?${nextParams.toString()}`);
+  }
+
   function clearAll() {
     setSearch('');
     router.replace(pathname);
@@ -97,6 +123,26 @@ export function TransactionsFilters({ accounts }: Props) {
   }
 
   const currentType = params.get('type') ?? 'all';
+
+  const selectedCategoryKeys = (
+    params.get('categoryKeys')?.split(',') ?? []
+  ).filter(Boolean);
+
+  let categoryTriggerLabel: string;
+  if (selectedCategoryKeys.length === 0) {
+    categoryTriggerLabel = t.transactions.filterCategoryAll;
+  } else if (selectedCategoryKeys.length === 1) {
+    const k = selectedCategoryKeys[0];
+    categoryTriggerLabel =
+      k === UNCATEGORIZED_KEY
+        ? t.transactions.filterCategoryUncategorized
+        : (categoryLabels[k] ?? k);
+  } else {
+    categoryTriggerLabel = t.transactions.filterCategoryCount.replace(
+      '{n}',
+      String(selectedCategoryKeys.length),
+    );
+  }
 
   return (
     <div className="bg-white rounded-2xl ring-1 ring-slate-200 p-4 space-y-3">
@@ -194,7 +240,102 @@ export function TransactionsFilters({ accounts }: Props) {
         </Select>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-3">
+      <div className="grid gap-3 md:grid-cols-4">
+        {/* Multi-select category filter — sits with the rest of the
+            "narrow the data down" controls; sort lives outside the card. */}
+        <div>
+          <label className="text-xs text-slate-600 block mb-1">
+            {t.transactions.filterCategory}
+          </label>
+          <Popover>
+            <PopoverTrigger
+              render={
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between gap-1.5 rounded-lg border border-input bg-transparent py-2 ps-2.5 pe-2 text-sm h-8"
+                >
+                  <span className="truncate text-start flex-1">
+                    {categoryTriggerLabel}
+                  </span>
+                  <ChevronDown className="size-4 text-slate-400 shrink-0" />
+                </button>
+              }
+            />
+            <PopoverContent align="start" className="w-72 p-1">
+              <ul className="max-h-80 overflow-y-auto">
+                <li>
+                  <button
+                    type="button"
+                    onClick={() => toggleCategory(UNCATEGORIZED_KEY)}
+                    className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm hover:bg-slate-100 text-start"
+                  >
+                    <span
+                      className={
+                        'size-4 rounded border flex items-center justify-center shrink-0 ' +
+                        (selectedCategoryKeys.includes(UNCATEGORIZED_KEY)
+                          ? 'bg-violet-600 border-violet-600 text-white'
+                          : 'border-slate-300')
+                      }
+                    >
+                      {selectedCategoryKeys.includes(UNCATEGORIZED_KEY) && (
+                        <Check className="size-3" />
+                      )}
+                    </span>
+                    <span className="text-base shrink-0">📦</span>
+                    <span className="truncate text-slate-700">
+                      {t.transactions.filterCategoryUncategorized}
+                    </span>
+                  </button>
+                </li>
+                {categories.map((c) => {
+                  const checked = selectedCategoryKeys.includes(c.key);
+                  return (
+                    <li key={c.id}>
+                      <button
+                        type="button"
+                        onClick={() => toggleCategory(c.key)}
+                        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm hover:bg-slate-100 text-start"
+                      >
+                        <span
+                          className={
+                            'size-4 rounded border flex items-center justify-center shrink-0 ' +
+                            (checked
+                              ? 'bg-violet-600 border-violet-600 text-white'
+                              : 'border-slate-300')
+                          }
+                        >
+                          {checked && <Check className="size-3" />}
+                        </span>
+                        <span className="text-base shrink-0">
+                          {c.icon ?? '📦'}
+                        </span>
+                        <span className="truncate">
+                          {categoryLabels[c.key] ?? c.key}
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+              {selectedCategoryKeys.length > 0 && (
+                <div className="border-t border-slate-100 mt-1 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = new URLSearchParams(params);
+                      next.delete('categoryKeys');
+                      router.replace(`${pathname}?${next.toString()}`);
+                    }}
+                    className="w-full text-xs text-slate-600 hover:text-slate-900 px-2 py-1.5 text-start"
+                  >
+                    {t.transactions.filterCategoryClear}
+                  </button>
+                </div>
+              )}
+            </PopoverContent>
+          </Popover>
+        </div>
+
         <div>
           <label className="text-xs text-slate-600 block mb-1">
             {t.transactions.filterDateFrom}

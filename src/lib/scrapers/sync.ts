@@ -16,6 +16,7 @@ import { linkTransactionsToRules } from '@/lib/recurring/link';
 import { detectInternalTransfers } from '@/lib/transactions/detect-transfers';
 import { detectCreditCardAggregates } from '@/lib/transactions/detect-cc-aggregates';
 import { autoCategorizeTransactions } from '@/lib/transactions/auto-categorize';
+import { applyUserLearnedCategories } from '@/lib/transactions/learned-categorize';
 import { computeDailyAllowance } from '@/lib/cycles/daily-allowance';
 import { sendPushToHousehold } from '@/lib/pwa/push-server';
 import { formatILS } from '@/lib/format';
@@ -171,10 +172,15 @@ export async function syncAccount(
     );
   }
 
-  // Cheap, idempotent post-processors safe after every single-account sync
+  // Cheap, idempotent post-processors safe after every single-account sync.
+  // Categorize sequentially: user-learned (per-household choices) wins, then
+  // generic keyword rules fill in the rest.
   await Promise.allSettled([
     detectInternalTransfers(householdId),
-    autoCategorizeTransactions(householdId),
+    (async () => {
+      await applyUserLearnedCategories(householdId);
+      await autoCategorizeTransactions(householdId);
+    })(),
     linkTransactionsToRules(householdId),
   ]);
 
@@ -206,12 +212,15 @@ export async function syncAllAccounts(
   // Order matters:
   // 1. Mark internal transfers first (they should never be auto-categorized as expenses)
   // 2. Identify CC aggregated charges (cross-account; only run on full sync)
-  // 3. Auto-categorize remaining transactions
+  // 3a. Apply user-learned categories — per-household choices for descriptions
+  //     the user has already categorized before
+  // 3b. Auto-categorize remaining uncategorized rows via generic keyword rules
   // 4. Detect & persist recurring patterns (excludes transfers and aggregates)
   // 5. Link transactions to confirmed recurring rules
   try {
     await detectInternalTransfers(householdId);
     await detectCreditCardAggregates(householdId);
+    await applyUserLearnedCategories(householdId);
     await autoCategorizeTransactions(householdId);
     const patterns = await detectRecurringPatterns(householdId);
     await persistDetectedPatterns(householdId, patterns);

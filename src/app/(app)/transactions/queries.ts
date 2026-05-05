@@ -40,21 +40,35 @@ export type TransactionRowGrouped = TransactionRow & {
   cardId?: string | null;
 };
 
+export type TransactionSort =
+  | 'date'
+  | 'amount_asc'
+  | 'amount_desc'
+  | 'category';
+
+// Sentinel category key for "uncategorized" rows (categoryId IS NULL). Kept in
+// sync with the filter UI — if the user picks the "no category" pill, this
+// string travels through the URL and back to the SQL filter.
+export const UNCATEGORIZED_KEY = 'uncategorized';
+
 export type TransactionFilters = {
   startDate?: string;
   endDate?: string;
   accountIds?: string[];
   categoryKey?: string;
+  categoryKeys?: string[];
   type?: 'all' | 'income' | 'expense';
   search?: string;
   includeTransfers?: boolean;
   includeAggregates?: boolean;
+  sort?: TransactionSort;
 };
 
 export async function listTransactions(
   householdId: string,
   filters: TransactionFilters = {},
   limit = 200,
+  offset = 0,
 ): Promise<TransactionRow[]> {
   const conds: SQL[] = [eq(transactions.householdId, householdId)];
 
@@ -108,6 +122,58 @@ export async function listTransactions(
     conds.push(eq(transactions.isAggregatedCharge, false));
   }
 
+  // Multi-select categories. UNCATEGORIZED_KEY maps to categoryId IS NULL;
+  // any other value matches against categories.key. Combined with OR so the
+  // user can select named categories AND "uncategorized" together.
+  if (filters.categoryKeys && filters.categoryKeys.length > 0) {
+    const namedKeys = filters.categoryKeys.filter(
+      (k) => k !== UNCATEGORIZED_KEY,
+    );
+    const includeUncategorized = filters.categoryKeys.includes(
+      UNCATEGORIZED_KEY,
+    );
+    const subConds: SQL[] = [];
+    if (namedKeys.length > 0) {
+      const inList = sql.join(
+        namedKeys.map((k) => sql`${k}`),
+        sql`, `,
+      );
+      subConds.push(sql`${categories.key} IN (${inList})`);
+    }
+    if (includeUncategorized) {
+      subConds.push(sql`${transactions.categoryId} IS NULL`);
+    }
+    const combined = or(...subConds);
+    if (combined) conds.push(combined);
+  }
+
+  // Sort by abs(amount) so expenses (negative) and income (positive) compare
+  // by magnitude — "high to low" puts the biggest spend or biggest deposit on
+  // top regardless of sign. Date-tiebreaker keeps adjacent equal-amount rows
+  // in chronological order.
+  const orderClauses = (() => {
+    switch (filters.sort) {
+      case 'amount_asc':
+        return [
+          sql`abs(${transactions.amount}) asc`,
+          desc(transactions.date),
+        ];
+      case 'amount_desc':
+        return [
+          sql`abs(${transactions.amount}) desc`,
+          desc(transactions.date),
+        ];
+      case 'category':
+        return [
+          sql`${categories.key} asc nulls last`,
+          desc(transactions.date),
+        ];
+      case 'date':
+      default:
+        return [desc(transactions.date), desc(transactions.createdAt)];
+    }
+  })();
+
   const rows = await db
     .select({
       id: transactions.id,
@@ -131,8 +197,9 @@ export async function listTransactions(
     .innerJoin(accounts, eq(accounts.id, transactions.accountId))
     .leftJoin(categories, eq(categories.id, transactions.categoryId))
     .where(and(...conds))
-    .orderBy(desc(transactions.date), desc(transactions.createdAt))
-    .limit(limit);
+    .orderBy(...orderClauses)
+    .limit(limit)
+    .offset(offset);
 
   return rows;
 }
@@ -145,18 +212,30 @@ export async function listTransactionsGrouped(
   householdId: string,
   filters: TransactionFilters = {},
   limit = 500,
+  offset = 0,
 ): Promise<TransactionRowGrouped[]> {
+  // Fetch exactly `limit` raw rows. Grouping attaches CC children to their
+  // aggregate parent (children come from a separate subquery), so the
+  // grouped row count == raw row count. Fetching exactly `limit` makes
+  // OFFSET-based pagination consistent: page N covers raw rows
+  // [N*limit .. (N+1)*limit), no overlap or gaps.
   const all = await listTransactions(
     householdId,
     { ...filters, includeAggregates: true },
-    limit * 2,
+    limit,
+    offset,
   );
 
-  const aggregates = all.filter((tx) => tx.isAggregatedCharge);
-  const others = all.filter((tx) => !tx.isAggregatedCharge);
-
+  // Walk `all` in its original order so the user's chosen sort is preserved.
+  // Aggregates get children attached inline; non-aggregates pass through.
+  // (The previous partition-then-sort-by-date approach undid any non-date sort.)
   const grouped: TransactionRowGrouped[] = [];
-  for (const agg of aggregates) {
+  for (const tx of all) {
+    if (!tx.isAggregatedCharge) {
+      grouped.push(tx);
+      continue;
+    }
+    const agg = tx;
     const match = await findCardForAggregate(householdId, agg.id);
     if (!match) {
       grouped.push({ ...agg, children: [], childrenSum: 0, cardId: null });
@@ -239,11 +318,5 @@ export async function listTransactionsGrouped(
     });
   }
 
-  const merged: TransactionRowGrouped[] = [...others, ...grouped];
-  merged.sort((a, b) => b.date.localeCompare(a.date));
-
-  if (!filters.includeAggregates) {
-    return merged;
-  }
-  return merged.slice(0, limit);
+  return grouped;
 }

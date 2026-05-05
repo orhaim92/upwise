@@ -128,7 +128,54 @@ export async function detectCreditCardAggregates(
     }
 
     if (matchingCards.length === 0) {
-      skippedNoMatch++;
+      // Fallback: handle immediate-debit rows ("דיירקט (חיוב מיידי)" etc.)
+      // where each bank line corresponds 1:1 to a single CC purchase rather
+      // than a summed billing batch. Sum-matching above can't disambiguate
+      // these when multiple same-day card purchases exist (each adds to the
+      // sum). For 1:1 we instead look for *exactly one* card row whose
+      // amount equals the bank amount in the date window.
+      const exactRows = await db.execute<{
+        account_id: string;
+        card_last_four: string;
+        match_count: string;
+      }>(sql`
+        SELECT account_id, card_last_four, count(*)::text AS match_count
+        FROM transactions t
+        INNER JOIN accounts a ON a.id = t.account_id
+        WHERE t.household_id = ${householdId}
+          AND a.type = 'credit_card'
+          AND t.amount = ${parseFloat(cand.amount)}
+          AND COALESCE(t.processed_date, t.date) >= ${windowStart}
+          AND COALESCE(t.processed_date, t.date) <= ${windowEnd}
+        GROUP BY account_id, card_last_four
+      `);
+
+      type ExactRow = {
+        account_id: string;
+        card_last_four: string;
+        match_count: string;
+      };
+      const exactMatches: ExactRow[] =
+        (exactRows as unknown as { rows?: ExactRow[] })?.rows ??
+        (exactRows as unknown as ExactRow[]);
+
+      // Need exactly one card with exactly one matching purchase. Anything
+      // ambiguous gets skipped — better to leave it un-flagged than to
+      // mistakenly hide a real expense from the donut.
+      const unique = exactMatches.filter((r) => r.match_count === '1');
+      if (unique.length === 1) {
+        const winner = unique[0];
+        await db
+          .update(transactions)
+          .set({
+            isAggregatedCharge: true,
+            cardLastFour: winner.card_last_four,
+          })
+          .where(eq(transactions.id, cand.id));
+        marked++;
+      } else {
+        skippedNoMatch++;
+      }
       continue;
     }
     if (matchingCards.length > 1) {

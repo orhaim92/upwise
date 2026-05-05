@@ -6,10 +6,18 @@ import {
   ChevronDown,
   ChevronUp,
   CreditCard,
+  Loader2,
 } from 'lucide-react';
+import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
 import { formatDate, formatILS, template } from '@/lib/format';
 import { t } from '@/lib/i18n/he';
-import type { TransactionRow, TransactionRowGrouped } from '../queries';
+import type {
+  TransactionFilters,
+  TransactionRow,
+  TransactionRowGrouped,
+} from '../queries';
+import { loadMoreTransactions } from '../actions';
 import { TransactionRowCard } from './transaction-row-card';
 
 type Category = {
@@ -20,18 +28,90 @@ type Category = {
 };
 
 type Props = {
-  transactions: TransactionRowGrouped[];
+  initialTransactions: TransactionRowGrouped[];
+  filters: TransactionFilters;
+  pageSize: number;
   categories: Category[];
 };
 
-export function TransactionsTable({ transactions, categories }: Props) {
-  const groups = groupByMonth(transactions);
+export function TransactionsTable({
+  initialTransactions,
+  filters,
+  pageSize,
+  categories,
+}: Props) {
+  // Cumulative list as the user scrolls deeper. Server-side filtering
+  // applies to the FULL dataset; we just render a growing window.
+  const [rows, setRows] = useState(initialTransactions);
+  const [hasMore, setHasMore] = useState(
+    initialTransactions.length === pageSize,
+  );
+  const [loading, setLoading] = useState(false);
+
+  // Month buckets only make sense for date-sorted data. With amount/category
+  // sort, rows from different months would interleave inside one month
+  // header — confusing. Render flat in those cases.
+  const sortedByDate = !filters.sort || filters.sort === 'date';
+  const groups = sortedByDate
+    ? groupByMonth(rows)
+    : [{ month: '', txs: rows }];
+
+  async function handleLoadMore() {
+    setLoading(true);
+    try {
+      const r = await loadMoreTransactions({
+        ...filters,
+        offset: rows.length,
+        limit: pageSize,
+      });
+      if (!r.ok || !r.rows) {
+        toast.error(r.error ?? t.common.error);
+        return;
+      }
+      setRows((prev) => [...prev, ...r.rows!]);
+      setHasMore(r.hasMore ?? false);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Client-side patch for the "apply to similar" bulk update. We avoided
+  // server-driven revalidation here (it raced with the dialog's portal
+  // cleanup and crashed hydration), so the table updates its own row
+  // snapshot when the dialog reports success. Walks both top-level rows
+  // and aggregate children — a CC line item could match the bulk set.
+  function applyBulkCategory(
+    ids: string[],
+    categoryKey: string,
+    categoryIcon: string | null,
+  ) {
+    const idSet = new Set(ids);
+    setRows((prev) =>
+      prev.map((row) => {
+        let updated = row;
+        if (idSet.has(row.id)) {
+          updated = { ...updated, categoryKey, categoryIcon };
+        }
+        if (updated.children && updated.children.length > 0) {
+          const newChildren = updated.children.map((c) =>
+            idSet.has(c.id) ? { ...c, categoryKey, categoryIcon } : c,
+          );
+          updated = { ...updated, children: newChildren };
+        }
+        return updated;
+      }),
+    );
+  }
 
   return (
     <div className="space-y-6">
       {groups.map(({ month, txs }) => (
-        <div key={month}>
-          <h2 className="text-sm font-semibold text-slate-600 mb-2">{month}</h2>
+        <div key={month || 'flat'}>
+          {month && (
+            <h2 className="text-sm font-semibold text-slate-600 mb-2">
+              {month}
+            </h2>
+          )}
           <div className="bg-white rounded-2xl ring-1 ring-slate-200 overflow-hidden">
             <ul className="divide-y divide-slate-100">
               {txs.map((tx) => {
@@ -41,12 +121,17 @@ export function TransactionsTable({ transactions, categories }: Props) {
                       key={tx.id}
                       tx={tx}
                       categories={categories}
+                      onBulkApplied={applyBulkCategory}
                     />
                   );
                 }
                 return (
                   <li key={tx.id}>
-                    <TransactionRowCard tx={tx} categories={categories} />
+                    <TransactionRowCard
+                      tx={tx}
+                      categories={categories}
+                      onBulkApplied={applyBulkCategory}
+                    />
                   </li>
                 );
               })}
@@ -54,6 +139,20 @@ export function TransactionsTable({ transactions, categories }: Props) {
           </div>
         </div>
       ))}
+
+      {hasMore && (
+        <div className="flex justify-center pt-2">
+          <Button
+            onClick={handleLoadMore}
+            disabled={loading}
+            variant="outline"
+            className="min-w-[10rem]"
+          >
+            {loading && <Loader2 className="size-4 animate-spin" />}
+            {loading ? t.common.loading : t.transactions.loadMore}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -61,9 +160,15 @@ export function TransactionsTable({ transactions, categories }: Props) {
 function AggregateRow({
   tx,
   categories,
+  onBulkApplied,
 }: {
   tx: TransactionRowGrouped;
   categories: Category[];
+  onBulkApplied: (
+    ids: string[],
+    categoryKey: string,
+    categoryIcon: string | null,
+  ) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const parentAmount = Math.abs(parseFloat(tx.amount));
@@ -152,6 +257,7 @@ function AggregateRow({
                   tx={child}
                   categories={categories}
                   compact
+                  onBulkApplied={onBulkApplied}
                 />
               </li>
             ))}

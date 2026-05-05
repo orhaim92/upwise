@@ -1,6 +1,6 @@
 'use server';
 
-import { and, eq, isNull, or } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { auth } from '@/lib/auth/config';
@@ -12,6 +12,55 @@ import {
   transactions,
 } from '@/lib/db/schema';
 import { getUserHouseholdId } from '@/lib/auth/household';
+import {
+  listTransactionsGrouped,
+  type TransactionRowGrouped,
+} from './queries';
+
+// Used by the transactions page's "Load more" button. The page server-
+// renders the first PAGE_SIZE rows; subsequent pages come through here.
+// Filters are passed in full so the offset window applies to the SAME
+// filtered dataset the user is currently looking at.
+const loadMoreSchema = z.object({
+  startDate: z.string().optional(),
+  endDate: z.string().optional(),
+  accountIds: z.array(z.string().uuid()).optional(),
+  categoryKeys: z.array(z.string()).optional(),
+  type: z.enum(['all', 'income', 'expense']).optional(),
+  search: z.string().optional(),
+  includeTransfers: z.boolean().optional(),
+  includeAggregates: z.boolean().optional(),
+  sort: z.enum(['date', 'amount_asc', 'amount_desc', 'category']).optional(),
+  offset: z.number().int().min(0),
+  limit: z.number().int().min(1).max(500).default(100),
+});
+
+export async function loadMoreTransactions(
+  input: unknown,
+): Promise<{
+  ok: boolean;
+  rows?: TransactionRowGrouped[];
+  hasMore?: boolean;
+  error?: string;
+}> {
+  const session = await auth();
+  if (!session?.user?.id) return { ok: false, error: 'לא מחובר' };
+
+  const parsed = loadMoreSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'נתונים לא תקינים' };
+
+  const householdId = await getUserHouseholdId(session.user.id);
+
+  const { offset, limit, ...filters } = parsed.data;
+  const rows = await listTransactionsGrouped(
+    householdId,
+    filters,
+    limit,
+    offset,
+  );
+
+  return { ok: true, rows, hasMore: rows.length === limit };
+}
 
 const setCategorySchema = z.object({
   transactionId: z.string().uuid(),
@@ -285,4 +334,165 @@ export async function listCategoriesForHousehold(): Promise<
       ),
     )
     .orderBy(categories.key);
+}
+
+// After the user assigns a category to one transaction, look for OTHER
+// uncategorized transactions in the same household with the same
+// `normalizedDescription`. Used by the "apply to similar" dialog.
+//
+// We deliberately exclude:
+//   - the source transaction itself (already updated by the caller)
+//   - transactions that already have ANY category (don't silently overwrite
+//     an explicit user choice)
+//   - aggregates and internal transfers (not categorizable in practice)
+//
+// Limited to 50 matches — the UI shows a scrollable list, but applying
+// hundreds at once is rarely the user's intent.
+const findSimilarSchema = z.object({
+  transactionId: z.string().uuid(),
+});
+
+export async function findSimilarUncategorizedTransactions(
+  input: unknown,
+): Promise<{
+  ok: boolean;
+  error?: string;
+  transactions?: Array<{
+    id: string;
+    date: string;
+    description: string;
+    amount: string;
+    accountDisplayName: string;
+  }>;
+}> {
+  const session = await auth();
+  if (!session?.user?.id) return { ok: false, error: 'לא מחובר' };
+
+  const parsed = findSimilarSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'נתונים לא תקינים' };
+
+  const householdId = await getUserHouseholdId(session.user.id);
+
+  const [source] = await db
+    .select({
+      householdId: transactions.householdId,
+      description: transactions.description,
+      normalizedDescription: transactions.normalizedDescription,
+    })
+    .from(transactions)
+    .where(eq(transactions.id, parsed.data.transactionId))
+    .limit(1);
+  if (!source || source.householdId !== householdId) {
+    return { ok: false, error: 'תנועה לא נמצאה' };
+  }
+  if (!source.description && !source.normalizedDescription) {
+    return { ok: true, transactions: [] };
+  }
+
+  // Match liberally: either the visible description matches exactly, OR the
+  // normalized form does. This catches:
+  //   - merchants whose `normalizedDescription` is null on legacy rows
+  //   - rows whose raw description varied (date stamp, store code) but whose
+  //     visible cleaned description ended up identical
+  // Both columns are populated by the scraper; using both as alternatives
+  // makes the lookup robust without false positives.
+  const descMatchClauses = [];
+  if (source.description) {
+    descMatchClauses.push(eq(transactions.description, source.description));
+  }
+  if (source.normalizedDescription) {
+    descMatchClauses.push(
+      eq(transactions.normalizedDescription, source.normalizedDescription),
+    );
+  }
+  const descMatch = or(...descMatchClauses);
+  if (!descMatch) return { ok: true, transactions: [] };
+
+  const matches = await db
+    .select({
+      id: transactions.id,
+      date: transactions.date,
+      description: transactions.description,
+      amount: transactions.amount,
+      accountDisplayName: accounts.displayName,
+    })
+    .from(transactions)
+    .innerJoin(accounts, eq(accounts.id, transactions.accountId))
+    .where(
+      and(
+        eq(transactions.householdId, householdId),
+        descMatch,
+        isNull(transactions.categoryId),
+        eq(transactions.isInternalTransfer, false),
+        eq(transactions.isAggregatedCharge, false),
+        sql`${transactions.id} <> ${parsed.data.transactionId}`,
+      ),
+    )
+    .orderBy(desc(transactions.date))
+    .limit(50);
+
+  return { ok: true, transactions: matches };
+}
+
+// Apply a single category to many transactions at once. Used by the
+// "apply to similar" dialog after the user confirms which matches to update.
+// Validates household ownership for both the category and every transaction
+// id (filtering, not erroring) — extra ids are silently dropped rather than
+// aborting the whole batch.
+const bulkSetCategorySchema = z.object({
+  transactionIds: z.array(z.string().uuid()).min(1).max(500),
+  categoryId: z.string().uuid(),
+});
+
+export async function bulkSetTransactionCategory(
+  input: unknown,
+): Promise<{ ok: boolean; error?: string; updated?: number }> {
+  const session = await auth();
+  if (!session?.user?.id) return { ok: false, error: 'לא מחובר' };
+
+  const parsed = bulkSetCategorySchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'נתונים לא תקינים' };
+
+  const householdId = await getUserHouseholdId(session.user.id);
+
+  const [cat] = await db
+    .select({ householdId: categories.householdId })
+    .from(categories)
+    .where(eq(categories.id, parsed.data.categoryId))
+    .limit(1);
+  if (!cat) return { ok: false, error: 'קטגוריה לא נמצאה' };
+  if (cat.householdId && cat.householdId !== householdId) {
+    return { ok: false, error: 'קטגוריה לא נמצאה' };
+  }
+
+  const owned = await db
+    .select({ id: transactions.id })
+    .from(transactions)
+    .where(
+      and(
+        eq(transactions.householdId, householdId),
+        inArray(transactions.id, parsed.data.transactionIds),
+      ),
+    );
+  const ownedIds = owned.map((r) => r.id);
+  if (ownedIds.length === 0) return { ok: true, updated: 0 };
+
+  await db
+    .update(transactions)
+    .set({ categoryId: parsed.data.categoryId, isUserModified: true })
+    .where(
+      and(
+        eq(transactions.householdId, householdId),
+        inArray(transactions.id, ownedIds),
+      ),
+    );
+
+  // Intentionally NOT revalidating /transactions here. Calling it triggers a
+  // server-driven re-render that lands while base-ui's dialog is mid-cleanup
+  // (scroll-lock / inert attributes), producing a hydration mismatch on the
+  // next user action. The toast tells the user the update succeeded and
+  // updated categories show up on the next filter / load-more / navigation.
+  // /dashboard is a different page so revalidating it is safe.
+  revalidatePath('/dashboard');
+  return { ok: true, updated: ownedIds.length };
 }
