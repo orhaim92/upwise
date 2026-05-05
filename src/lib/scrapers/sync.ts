@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import { and, eq, sql } from 'drizzle-orm';
-import { format } from 'date-fns';
+import { formatInTimeZone } from 'date-fns-tz';
 import { db } from '@/lib/db';
 import { accounts, households, transactions } from '@/lib/db/schema';
 import { scrapeAccount, type ScrapedTransaction } from './index';
@@ -20,14 +20,25 @@ import { computeDailyAllowance } from '@/lib/cycles/daily-allowance';
 import { sendPushToHousehold } from '@/lib/pwa/push-server';
 import { formatILS } from '@/lib/format';
 
+// All date formatting is locked to Asia/Jerusalem so the same transaction
+// produces the same `date` / `processedDate` / externalKey regardless of
+// where the sync runs (local Israel TZ vs GH Actions UTC vs Vercel UTC).
+// Without this, a tx whose UTC instant straddles Israeli midnight gets
+// dupe-inserted with adjacent dates on different runs.
+const TZ = 'Asia/Jerusalem';
+
+function dateString(d: Date): string {
+  return formatInTimeZone(d, TZ, 'yyyy-MM-dd');
+}
+
 // Composite dedup key. Always includes the bank's identifier (if present) PLUS
 // content fields, so we survive scrapers that reuse the same identifier across
 // real distinct transactions (Mizrahi has been observed doing this).
 function externalKey(tx: ScrapedTransaction): string {
   const parts = [
     tx.externalId ?? '',
-    format(tx.date, 'yyyy-MM-dd'),
-    tx.processedDate ? format(tx.processedDate, 'yyyy-MM-dd') : '',
+    dateString(tx.date),
+    tx.processedDate ? dateString(tx.processedDate) : '',
     tx.amount.toFixed(2),
     tx.rawDescription ?? '',
     tx.installmentNumber ?? '',
@@ -115,10 +126,8 @@ export async function syncAccount(
         accountId,
         householdId,
         externalId,
-        date: format(tx.date, 'yyyy-MM-dd'),
-        processedDate: tx.processedDate
-          ? format(tx.processedDate, 'yyyy-MM-dd')
-          : null,
+        date: dateString(tx.date),
+        processedDate: tx.processedDate ? dateString(tx.processedDate) : null,
         amount: tx.amount.toFixed(2),
         description: tx.description,
         rawDescription: tx.rawDescription,
