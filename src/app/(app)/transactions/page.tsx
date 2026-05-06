@@ -1,8 +1,10 @@
 import { eq } from 'drizzle-orm';
+import { format, subMonths } from 'date-fns';
 import { auth } from '@/lib/auth/config';
 import { getUserHouseholdId } from '@/lib/auth/household';
 import { db } from '@/lib/db';
-import { accounts } from '@/lib/db/schema';
+import { accounts, households } from '@/lib/db/schema';
+import { getActiveBillingCycle } from '@/lib/cycles/billing-cycle';
 import { SyncButton } from '@/components/sync-button';
 import { TransactionsFilters } from './_components/transactions-filters';
 import { TransactionsSort } from './_components/transactions-sort';
@@ -26,15 +28,46 @@ type Props = {
     search?: string;
     sort?: string;
     showSpecial?: string;
+    cycle?: string; // negative integer offset: 0=current, -1=prev, etc.
   }>;
 };
 
 const VALID_SORTS = ['date', 'amount_asc', 'amount_desc', 'category'] as const;
+const MAX_CYCLE_OFFSET_BACK = 24;
 
 export default async function TransactionsPage({ searchParams }: Props) {
   const session = await auth();
   const householdId = await getUserHouseholdId(session!.user.id);
   const params = await searchParams;
+
+  // Resolve cycle filter (if any) to startDate/endDate. The cycle offset
+  // takes precedence over an explicit startDate/endDate from the URL — this
+  // keeps the UI predictable: picking a cycle replaces the date inputs.
+  let cycleStart: string | undefined;
+  let cycleEnd: string | undefined;
+  let activeCycleOffset: number | undefined;
+  if (params.cycle !== undefined) {
+    const raw = parseInt(params.cycle, 10);
+    if (Number.isFinite(raw)) {
+      const offset = Math.max(-MAX_CYCLE_OFFSET_BACK, Math.min(0, raw));
+      const [household] = await db
+        .select({ billingCycleStartDay: households.billingCycleStartDay })
+        .from(households)
+        .where(eq(households.id, householdId))
+        .limit(1);
+      if (household) {
+        const target =
+          offset === 0 ? new Date() : subMonths(new Date(), -offset);
+        const cycle = getActiveBillingCycle(
+          household.billingCycleStartDay,
+          target,
+        );
+        cycleStart = format(cycle.startDate, 'yyyy-MM-dd');
+        cycleEnd = format(cycle.endDate, 'yyyy-MM-dd');
+        activeCycleOffset = offset;
+      }
+    }
+  }
 
   const showSpecial = params.showSpecial === '1';
   const accountIds = params.accountIds
@@ -49,8 +82,9 @@ export default async function TransactionsPage({ searchParams }: Props) {
     ? (params.sort as TransactionFilters['sort'])
     : undefined;
   const filters: TransactionFilters = {
-    startDate: params.startDate,
-    endDate: params.endDate,
+    // Cycle bounds win over manual date inputs when both are present.
+    startDate: cycleStart ?? params.startDate,
+    endDate: cycleEnd ?? params.endDate,
     accountIds,
     categoryKeys,
     type: params.type as 'income' | 'expense' | 'all' | undefined,
@@ -83,7 +117,11 @@ export default async function TransactionsPage({ searchParams }: Props) {
         <SyncButton />
       </div>
 
-      <TransactionsFilters accounts={accountList} categories={categories} />
+      <TransactionsFilters
+        accounts={accountList}
+        categories={categories}
+        activeCycleOffset={activeCycleOffset}
+      />
 
       {txs.length === 0 ? (
         <div className="text-center p-12 bg-white rounded-2xl ring-1 ring-slate-200">

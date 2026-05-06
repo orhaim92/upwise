@@ -88,6 +88,16 @@ export const PROVIDERS: Provider[] = [
       { key: 'password', label: 'סיסמה', type: 'password' },
     ],
   },
+  {
+    id: 'amex',
+    name: 'אמריקן אקספרס',
+    type: 'credit_card',
+    fields: [
+      { key: 'id', label: 'תעודת זהות', type: 'text' },
+      { key: 'card6Digits', label: '6 ספרות אחרונות של הכרטיס', type: 'text' },
+      { key: 'password', label: 'סיסמה', type: 'password' },
+    ],
+  },
 ];
 
 export function getProvider(id: string): Provider | undefined {

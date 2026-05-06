@@ -5,8 +5,9 @@ import { useState, useTransition } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import type {
   CategoryDiff,
+  CategoryTxStub,
+  CycleSpendComparison,
   DonutSlice,
-  ForecastPoint,
   TrendPoint,
 } from '@/lib/charts/queries';
 import type { ChartRange } from './range-picker';
@@ -21,8 +22,11 @@ const CategoryDonutChart = dynamic(
   () => import('./category-donut-chart').then((m) => m.CategoryDonutChart),
   { ssr: false, loading: () => <ChartSkeleton /> },
 );
-const CycleForecastChart = dynamic(
-  () => import('./cycle-forecast-chart').then((m) => m.CycleForecastChart),
+const CycleSpendComparisonChart = dynamic(
+  () =>
+    import('./cycle-spend-comparison-chart').then(
+      (m) => m.CycleSpendComparisonChart,
+    ),
   { ssr: false, loading: () => <ChartSkeleton /> },
 );
 const MonthlyTrendChart = dynamic(
@@ -45,11 +49,10 @@ function ChartSkeleton() {
 
 type Props = {
   donutSlices: DonutSlice[];
-  forecastPoints: ForecastPoint[];
-  forecastExpectedTotal?: number;
-  forecastTodayLabel?: string;
+  comparisonData: CycleSpendComparison;
   trendData: TrendPoint[];
   diffData: CategoryDiff[];
+  txByCategory: Record<string, CategoryTxStub[]>;
   initialRange: ChartRange;
   cycleOffset: number;
   cycleRangeLabel: string;
@@ -57,11 +60,10 @@ type Props = {
 
 export function DashboardCharts({
   donutSlices,
-  forecastPoints,
-  forecastExpectedTotal,
-  forecastTodayLabel,
+  comparisonData,
   trendData,
   diffData,
+  txByCategory,
   initialRange,
   cycleOffset,
   cycleRangeLabel,
@@ -91,12 +93,11 @@ export function DashboardCharts({
         cycleRangeLabel={cycleRangeLabel}
       />
       <div className="grid gap-4 lg:grid-cols-2">
-        <CategoryDonutChart slices={donutSlices} />
-        <CycleForecastChart
-          points={forecastPoints}
-          expectedTotal={forecastExpectedTotal}
-          todayLabel={forecastTodayLabel}
+        <CategoryDonutChart
+          slices={donutSlices}
+          txByCategory={txByCategory}
         />
+        <CycleSpendComparisonChart data={comparisonData} />
       </div>
 
       <MonthlyTrendChart
@@ -105,7 +106,7 @@ export function DashboardCharts({
         onRangeChange={handleRangeChange}
       />
 
-      <CategoryDiffChart diffs={diffData} />
+      <CategoryDiffChart diffs={diffData} txByCategory={txByCategory} />
     </div>
   );
 }

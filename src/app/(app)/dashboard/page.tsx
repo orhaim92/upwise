@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { Plus, Sparkles } from 'lucide-react';
 import { and, desc, eq } from 'drizzle-orm';
-import { differenceInHours, format, subMonths } from 'date-fns';
+import { differenceInHours, subMonths } from 'date-fns';
 import { auth } from '@/lib/auth/config';
 import { getUserHouseholdId } from '@/lib/auth/household';
 import { db } from '@/lib/db';
@@ -21,9 +21,10 @@ import {
 } from '@/lib/cycles/billing-cycle';
 import {
   getCurrentCycleSpendByCategory,
-  getCycleForecast,
+  getCycleSpendComparison,
   getMonthOverMonthDiff,
   getMonthlyTrend,
+  getTransactionsByCategoryForCycle,
   rangeToMonths,
 } from '@/lib/charts/queries';
 import { Card } from '@/components/ui/card';
@@ -154,26 +155,27 @@ export default async function DashboardPage({ searchParams }: Props) {
         subMonths(today, -cycleOffset),
       );
 
-  // For past cycles, "today" for the forecast = end-of-cycle so every day in
-  // the chart counts as realized (no projection band). For the current cycle
-  // we keep actual `today` so the projection picks up where actuals end.
-  const forecastToday = isCurrentCycle ? today : chartCycle.endDate;
+  // For past cycles, the comparison query treats "today" as the end of the
+  // cycle so the actual side reflects the full realized total.
+  const comparisonToday = isCurrentCycle ? today : chartCycle.endDate;
 
-  const [donutSlices, forecastPoints, trendData, diffData] = await Promise.all([
+  const [
+    donutSlices,
+    comparisonData,
+    trendData,
+    diffData,
+    txByCategory,
+  ] = await Promise.all([
     getCurrentCycleSpendByCategory(householdId, chartCycle),
-    getCycleForecast(householdId, chartCycle, forecastToday),
-    getMonthlyTrend(householdId, rangeToMonths(range)),
-    getMonthOverMonthDiff(householdId, today),
+    getCycleSpendComparison(householdId, chartCycle, comparisonToday),
+    getMonthlyTrend(
+      householdId,
+      rangeToMonths(range),
+      household.billingCycleStartDay,
+    ),
+    getMonthOverMonthDiff(householdId, household.billingCycleStartDay, today),
+    getTransactionsByCategoryForCycle(householdId, chartCycle),
   ]);
-
-  // Budget reference line: realized + still-scheduled recurring. Only valid
-  // for the current cycle — past cycles are fully realized, so the line
-  // would just sit at the actual peak (redundant). Pass undefined to skip it.
-  const forecastExpectedTotal = isCurrentCycle
-    ? allowance.expensesRealizedToDate +
-      allowance.expectedRemainingRecurringExpenses
-    : undefined;
-  const forecastTodayLabel = isCurrentCycle ? format(today, 'd.M') : undefined;
   const cycleRangeLabel = formatCycleRange(chartCycle);
 
   return (
@@ -212,11 +214,10 @@ export default async function DashboardPage({ searchParams }: Props) {
 
       <DashboardCharts
         donutSlices={donutSlices}
-        forecastPoints={forecastPoints}
-        forecastExpectedTotal={forecastExpectedTotal}
-        forecastTodayLabel={forecastTodayLabel}
+        comparisonData={comparisonData}
         trendData={trendData}
         diffData={diffData}
+        txByCategory={txByCategory}
         initialRange={range}
         cycleOffset={cycleOffset}
         cycleRangeLabel={cycleRangeLabel}

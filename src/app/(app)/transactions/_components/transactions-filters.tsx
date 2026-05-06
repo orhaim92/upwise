@@ -29,6 +29,10 @@ type Category = {
 type Props = {
   accounts: { id: string; displayName: string }[];
   categories: Category[];
+  // When the URL has ?cycle=N, the page resolves it to a specific billing
+  // cycle and passes the offset back so the picker can highlight the active
+  // option. Undefined when no cycle filter is active.
+  activeCycleOffset?: number;
 };
 
 const TYPE_LABELS: Record<string, string> = {
@@ -39,7 +43,11 @@ const TYPE_LABELS: Record<string, string> = {
 
 const UNCATEGORIZED_KEY = 'uncategorized';
 
-export function TransactionsFilters({ accounts, categories }: Props) {
+export function TransactionsFilters({
+  accounts,
+  categories,
+  activeCycleOffset,
+}: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
@@ -82,6 +90,20 @@ export function TransactionsFilters({ accounts, categories }: Props) {
     if (next.length > 0) nextParams.set('accountIds', next.join(','));
     else nextParams.delete('accountIds');
     router.replace(`${pathname}?${nextParams.toString()}`);
+  }
+
+  function setCycle(offset: number | null) {
+    const next = new URLSearchParams(params);
+    if (offset === null) {
+      next.delete('cycle');
+    } else {
+      next.set('cycle', String(offset));
+      // The cycle takes precedence over manual date inputs, so clear them
+      // to avoid a confusing UI showing both at once.
+      next.delete('startDate');
+      next.delete('endDate');
+    }
+    router.replace(`${pathname}?${next.toString()}`);
   }
 
   function toggleCategory(key: string) {
@@ -144,8 +166,55 @@ export function TransactionsFilters({ accounts, categories }: Props) {
     );
   }
 
+  // Cycle quick-pick options. Just current / previous / 2-back; deeper history
+  // is rare on this page (users with that need use the date inputs directly).
+  const cycleOptions: Array<{ offset: number | null; label: string }> = [
+    { offset: null, label: t.transactions.filterCycleAll },
+    { offset: 0, label: t.transactions.filterCycleCurrent },
+    { offset: -1, label: t.transactions.filterCyclePrev },
+    {
+      offset: -2,
+      label: t.transactions.filterCycleBack.replace('{n}', '2'),
+    },
+    {
+      offset: -3,
+      label: t.transactions.filterCycleBack.replace('{n}', '3'),
+    },
+  ];
+
   return (
     <div className="bg-white rounded-2xl ring-1 ring-slate-200 p-4 space-y-3">
+      {/* Cycle quick-pick — sits first so it's visible at a glance. Selecting
+          a cycle clears any manual startDate/endDate, since the cycle bounds
+          take precedence on the server side. */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs text-slate-500 shrink-0">
+          {t.transactions.filterCycle}:
+        </span>
+        <div className="inline-flex bg-slate-100 rounded-lg p-0.5 flex-wrap gap-0.5">
+          {cycleOptions.map((opt) => {
+            const isActive =
+              opt.offset === null
+                ? activeCycleOffset === undefined
+                : activeCycleOffset === opt.offset;
+            return (
+              <button
+                key={opt.offset === null ? 'all' : String(opt.offset)}
+                type="button"
+                onClick={() => setCycle(opt.offset)}
+                className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                  isActive
+                    ? 'bg-white text-slate-900 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       <div className="grid gap-3 md:grid-cols-4">
         <div className="relative md:col-span-2">
           <Search className="absolute start-3 top-1/2 -translate-y-1/2 size-4 text-slate-400" />

@@ -3,8 +3,21 @@ import {
   CompanyTypes,
   type ScraperCredentials,
 } from 'israeli-bank-scrapers';
+import puppeteer from 'puppeteer';
 import { subMonths } from 'date-fns';
 import { decryptJSON } from '@/lib/crypto';
+
+// CDP per-call timeout. Default in puppeteer is 30s, which Israeli card
+// portals routinely blow past during heavy `Runtime.callFunctionOn` evals
+// (e.g. Isracard's transaction loader). Library's `timeout` option only
+// covers navigation timeouts, not CDP calls — so we launch puppeteer
+// ourselves with this set and pass the browser in via the external-browser
+// path.
+const PROTOCOL_TIMEOUT_MS = 180_000;
+// Per-page navigation timeout. The library normally sets this from its
+// `timeout` option, but only when it launches the browser itself. Since
+// we're providing an external browser, we apply it via a newPage wrapper.
+const NAVIGATION_TIMEOUT_MS = 120_000;
 
 export type ScrapeErrorType =
   | 'INVALID_PASSWORD'
@@ -49,6 +62,7 @@ const PROVIDER_TO_COMPANY: Record<string, CompanyTypes> = {
   mizrahi: CompanyTypes.mizrahi,
   otsarHahayal: CompanyTypes.otsarHahayal,
   isracard: CompanyTypes.isracard,
+  amex: CompanyTypes.amex,
   max: CompanyTypes.max,
   visaCal: CompanyTypes.visaCal,
 };
@@ -74,24 +88,20 @@ export async function scrapeAccount(params: {
   );
 
   try {
-    const scraper = createScraper({
-      companyId: company,
-      startDate,
-      combineInstallments: false,
-      showBrowser: false,
-      verbose: false,
-      timeout: 120_000,
-      // CI / anti-detection args:
-      //  --no-sandbox / --disable-setuid-sandbox: GH Actions Ubuntu has no
-      //    user namespaces, Chrome's sandbox can't init. Standard workaround.
-      //  --disable-blink-features=AutomationControlled: removes the
-      //    navigator.webdriver=true flag — the #1 signal bank WAFs use to
-      //    fingerprint headless Chrome.
-      //  --disable-dev-shm-usage: small /dev/shm in CI containers; without
-      //    this Chrome OOMs on heavy SPAs.
-      //  --window-size: matches a real desktop viewport.
-      //  --user-agent: identify as a recent stable Chrome on Windows
-      //    (matching what most home users actually browse from).
+    // CI / anti-detection args:
+    //  --no-sandbox / --disable-setuid-sandbox: GH Actions Ubuntu has no
+    //    user namespaces, Chrome's sandbox can't init. Standard workaround.
+    //  --disable-blink-features=AutomationControlled: removes the
+    //    navigator.webdriver=true flag — the #1 signal bank WAFs use to
+    //    fingerprint headless Chrome.
+    //  --disable-dev-shm-usage: small /dev/shm in CI containers; without
+    //    this Chrome OOMs on heavy SPAs.
+    //  --window-size: matches a real desktop viewport.
+    //  --user-agent: identify as a recent stable Chrome on Windows
+    //    (matching what most home users actually browse from).
+    const browser = await puppeteer.launch({
+      headless: true,
+      protocolTimeout: PROTOCOL_TIMEOUT_MS,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -100,6 +110,27 @@ export async function scrapeAccount(params: {
         '--window-size=1920,1080',
         '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
       ],
+    });
+
+    // The library normally calls page.setDefaultNavigationTimeout from its
+    // `timeout` option, but only on the path where it owns the browser.
+    // Wrap newPage so every page the scraper opens inherits our navigation
+    // timeout regardless.
+    const originalNewPage = browser.newPage.bind(browser);
+    browser.newPage = async (...args: Parameters<typeof originalNewPage>) => {
+      const page = await originalNewPage(...args);
+      page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
+      return page;
+    };
+
+    const scraper = createScraper({
+      companyId: company,
+      startDate,
+      combineInstallments: false,
+      verbose: false,
+      // External-browser path. Library closes the browser after scrape
+      // finishes (skipCloseBrowser defaults to false), so no cleanup needed.
+      browser,
     });
 
     const result = await scraper.scrape(credentials);

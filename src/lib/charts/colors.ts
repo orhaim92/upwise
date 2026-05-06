@@ -22,13 +22,24 @@ export function colorForIndex(i: number): string {
 }
 
 // Stable color for a given category key — same key always gets same color.
-// Hash so re-ordered/added categories keep their identity.
+// Uses HSL with the golden-angle constant (137.508°) to spread hues evenly
+// across the wheel based on a hash of the key. With 24+ categories the
+// curated palette above started clustering several keys onto similar
+// orange/amber shades; HSL gives effectively infinite distinct hues with no
+// risk of collision while keeping output stable per key across renders.
+//
+// Saturation and lightness wiggle slightly (within readable bounds) so two
+// categories whose hues land close together still feel visually distinct.
 export function colorForCategory(key: string): string {
   let hash = 0;
   for (let i = 0; i < key.length; i++) {
     hash = (hash * 31 + key.charCodeAt(i)) | 0;
   }
-  return CATEGORY_COLORS[Math.abs(hash) % CATEGORY_COLORS.length];
+  const abs = Math.abs(hash);
+  const hue = (abs * 137.508) % 360;
+  const sat = 60 + (abs % 20); // 60–80%
+  const light = 50 + ((abs >> 8) % 8); // 50–58%
+  return `hsl(${hue.toFixed(0)} ${sat}% ${light}%)`;
 }
 
 export const CHART_INCOME = '#10B981';

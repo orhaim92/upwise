@@ -61,6 +61,12 @@ export function CycleForecastChart({
 
   const tickInterval = Math.max(1, Math.floor(chartData.length / 6));
 
+  // Past cycles have no future days — every point is realized, so the
+  // projected line literally retraces the actual line. Hide it (and its
+  // legend entry) so the chart reads as a clean cumulative-spend history
+  // instead of a misleading "forecast that matches reality perfectly."
+  const hasFutureDays = points.some((p) => p.actual === null);
+
   return (
     <ChartCard
       title={t.charts.forecastTitle}
@@ -133,16 +139,18 @@ export function CycleForecastChart({
               dot={false}
               connectNulls={false}
             />
-            <Line
-              type="monotone"
-              dataKey="projected"
-              name={t.charts.forecastProjected}
-              stroke={CHART_PROJECTION}
-              strokeDasharray="6 3"
-              strokeWidth={2}
-              dot={false}
-              connectNulls={false}
-            />
+            {hasFutureDays && (
+              <Line
+                type="monotone"
+                dataKey="projected"
+                name={t.charts.forecastProjected}
+                stroke={CHART_PROJECTION}
+                strokeDasharray="6 3"
+                strokeWidth={2}
+                dot={false}
+                connectNulls={false}
+              />
+            )}
           </LineChart>
         </ResponsiveContainer>
       </div>

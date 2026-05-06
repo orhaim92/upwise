@@ -17,6 +17,7 @@ import { detectInternalTransfers } from '@/lib/transactions/detect-transfers';
 import { detectCreditCardAggregates } from '@/lib/transactions/detect-cc-aggregates';
 import { autoCategorizeTransactions } from '@/lib/transactions/auto-categorize';
 import { applyUserLearnedCategories } from '@/lib/transactions/learned-categorize';
+import { consolidateCrossDayDuplicates } from '@/lib/transactions/consolidate-cross-day-duplicates';
 import { computeDailyAllowance } from '@/lib/cycles/daily-allowance';
 import { sendPushToHousehold } from '@/lib/pwa/push-server';
 import { formatILS } from '@/lib/format';
@@ -173,11 +174,17 @@ export async function syncAccount(
   }
 
   // Cheap, idempotent post-processors safe after every single-account sync.
-  // Categorize sequentially: user-learned (per-household choices) wins, then
-  // generic keyword rules fill in the rest.
+  // Order inside the categorize chain matters:
+  //   1. consolidate cross-day dupes first — some Israeli scrapers shift
+  //      tx.date by ±1 day between syncs, landing duplicate rows. Cleaning
+  //      them before categorization avoids categorizing rows we're about
+  //      to delete.
+  //   2. user-learned (per-household choices) wins over generic rules.
+  //   3. generic keyword RULES fill in the rest.
   await Promise.allSettled([
     detectInternalTransfers(householdId),
     (async () => {
+      await consolidateCrossDayDuplicates(householdId);
       await applyUserLearnedCategories(householdId);
       await autoCategorizeTransactions(householdId);
     })(),
@@ -212,14 +219,17 @@ export async function syncAllAccounts(
   // Order matters:
   // 1. Mark internal transfers first (they should never be auto-categorized as expenses)
   // 2. Identify CC aggregated charges (cross-account; only run on full sync)
-  // 3a. Apply user-learned categories — per-household choices for descriptions
+  // 3. Consolidate cross-day duplicate rows (date drift across syncs) before
+  //    we waste effort categorizing rows we're about to delete
+  // 4a. Apply user-learned categories — per-household choices for descriptions
   //     the user has already categorized before
-  // 3b. Auto-categorize remaining uncategorized rows via generic keyword rules
-  // 4. Detect & persist recurring patterns (excludes transfers and aggregates)
-  // 5. Link transactions to confirmed recurring rules
+  // 4b. Auto-categorize remaining uncategorized rows via generic keyword rules
+  // 5. Detect & persist recurring patterns (excludes transfers and aggregates)
+  // 6. Link transactions to confirmed recurring rules
   try {
     await detectInternalTransfers(householdId);
     await detectCreditCardAggregates(householdId);
+    await consolidateCrossDayDuplicates(householdId);
     await applyUserLearnedCategories(householdId);
     await autoCategorizeTransactions(householdId);
     const patterns = await detectRecurringPatterns(householdId);

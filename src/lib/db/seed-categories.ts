@@ -16,6 +16,7 @@ const SYSTEM_CATEGORIES = [
   { key: 'subscriptions', icon: '📺', color: '#A855F7' },
   { key: 'shopping', icon: '🛍️', color: '#F97316' },
   { key: 'clothing', icon: '👕', color: '#DB2777' },
+  { key: 'stock', icon: '🏷️', color: '#EAB308' },
   { key: 'entertainment', icon: '🎬', color: '#D946EF' },
   { key: 'travel', icon: '✈️', color: '#0EA5E9' },
   { key: 'education', icon: '📚', color: '#0891B2' },
