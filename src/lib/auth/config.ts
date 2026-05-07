@@ -5,6 +5,8 @@ import { db } from '@/lib/db';
 import { users } from '@/lib/db/schema';
 import { verifyPassword } from './password';
 import { loginSchema } from '@/lib/validations/auth';
+import { verifyAuthentication } from './webauthn/server';
+import { readAndClearChallenge } from './webauthn/challenge';
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   session: { strategy: 'jwt', maxAge: 7 * 24 * 60 * 60 },
@@ -36,6 +38,46 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           id: user.id,
           email: user.email,
           name: user.name ?? undefined,
+        };
+      },
+    }),
+    // Passkey / WebAuthn login. The client first calls
+    // getPasskeyAuthenticationOptions() to seed the challenge cookie, then
+    // navigator.credentials.get() produces an assertion which we serialize
+    // and POST through this provider. authorize() reads the same challenge
+    // cookie, hands the assertion + cookie to the verifier, and on success
+    // returns the matching user — Auth.js then mints its JWT session as
+    // usual.
+    Credentials({
+      id: 'passkey',
+      credentials: {
+        // The full PublicKeyCredential JSON returned by startAuthentication.
+        response: {},
+      },
+      authorize: async (credentials) => {
+        const raw = credentials?.response;
+        if (typeof raw !== 'string' || raw.length === 0) return null;
+
+        let response: Parameters<typeof verifyAuthentication>[0]['response'];
+        try {
+          response = JSON.parse(raw);
+        } catch {
+          return null;
+        }
+
+        const challenge = await readAndClearChallenge('authentication');
+        if (!challenge) return null;
+
+        const result = await verifyAuthentication({
+          expectedChallenge: challenge,
+          response,
+        });
+        if (!result.ok) return null;
+
+        return {
+          id: result.userId,
+          email: result.userEmail,
+          name: result.userName ?? undefined,
         };
       },
     }),

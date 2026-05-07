@@ -20,6 +20,8 @@
     "@ai-sdk/react": "^3.0.176",
     "@base-ui/react": "^1.4.1",
     "@hookform/resolvers": "^3.9.0",
+    "@simplewebauthn/browser": "^9.0.1",
+    "@simplewebauthn/server": "^9.0.3",
     "ai": "^6.0.174",
     "bcryptjs": "^2.4.3",
     "class-variance-authority": "^0.7.1",

@@ -38,6 +38,8 @@ export const t = {
     signupSuccess: 'נרשמת בהצלחה',
     signupFailed: 'ההרשמה נכשלה',
     logout: 'התנתק',
+    orDivider: 'או',
+    signInWithPasskey: 'התחבר עם טביעת אצבע',
   },
   dashboard: {
     title: 'דשבורד',
@@ -383,6 +385,25 @@ export const t = {
     installPromptBody: 'גישה מהירה והתראות מקוריות',
     installPromptCta: 'התקן עכשיו',
     installPromptDismiss: 'אולי בפעם אחרת',
+  },
+  passkeys: {
+    title: 'התחברות מהירה',
+    subtitle:
+      'התחבר עם טביעת אצבע, זיהוי פנים או PIN של המכשיר במקום להקליד סיסמה.',
+    addTitle: 'הוסף מפתח גישה למכשיר הזה',
+    addSubtitle:
+      'אחרי הוספה, תוכל להתחבר במכשיר הזה בלחיצה אחת — בלי סיסמה.',
+    addButton: 'הוסף מפתח גישה',
+    adding: 'מוסיף...',
+    added: 'מפתח הגישה נוסף',
+    listTitle: 'מפתחות גישה רשומים',
+    empty: 'עדיין לא רשמת אף מכשיר.',
+    unnamedDevice: 'מכשיר',
+    registeredOn: 'נוסף',
+    lastUsed: 'שימוש אחרון',
+    removeAria: 'הסר מפתח גישה',
+    removed: 'מפתח הגישה הוסר',
+    errorGeneric: 'משהו השתבש. נסה שוב.',
   },
   offline: {
     banner: 'אין חיבור — מציג נתונים מהקאש',

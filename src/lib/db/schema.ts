@@ -453,3 +453,34 @@ export const transactions = pgTable(
     index('idx_tx_normalized').on(t.householdId, t.normalizedDescription),
   ],
 );
+
+// Phase 9: WebAuthn / Passkey credentials. One row per (user, authenticator).
+// `credentialId` is the unique identifier the browser hands back; we look up
+// by it during signin. `publicKey` and `counter` are the verifier inputs for
+// every assertion; counter is bumped after each successful auth (replay
+// defense). `transports` is a comma-joined hint list ('internal,hybrid'...)
+// surfaced back to navigator.credentials.get to speed device picker.
+//
+// `label` is a user-friendly name like "iPhone Touch ID" so the settings UI
+// can list multiple devices clearly.
+export const authenticators = pgTable(
+  'authenticators',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    credentialId: text('credential_id').notNull().unique(),
+    publicKey: text('public_key').notNull(),
+    counter: integer('counter').notNull().default(0),
+    deviceType: text('device_type'),
+    backedUp: boolean('backed_up').notNull().default(false),
+    transports: text('transports'),
+    label: text('label'),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [index('idx_authenticators_user').on(t.userId)],
+);

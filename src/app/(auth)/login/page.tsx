@@ -7,11 +7,13 @@ import { signIn } from 'next-auth/react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Fingerprint } from 'lucide-react';
+import { startAuthentication } from '@simplewebauthn/browser';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { loginSchema, type LoginInput } from '@/lib/validations/auth';
+import { getPasskeyAuthenticationOptions } from './passkey-actions';
 import { t } from '@/lib/i18n/he';
 
 export default function LoginPage() {
@@ -26,6 +28,7 @@ function LoginForm() {
   const searchParams = useSearchParams();
   const redirectTo = searchParams.get('redirect') ?? '/dashboard';
   const [submitting, setSubmitting] = useState(false);
+  const [passkeySigningIn, setPasskeySigningIn] = useState(false);
 
   const {
     register,
@@ -57,6 +60,38 @@ function LoginForm() {
     // is sent. We keep `submitting` true so the spinner stays visible until
     // the navigation actually starts.
     window.location.assign(redirectTo);
+  }
+
+  async function onPasskeySignIn() {
+    setPasskeySigningIn(true);
+    try {
+      const options = await getPasskeyAuthenticationOptions();
+      // Browser shows the OS biometric / credential picker.
+      const assertion = await startAuthentication(options);
+      const result = await signIn('passkey', {
+        response: JSON.stringify(assertion),
+        redirect: false,
+      });
+      if (result?.error) {
+        toast.error(t.auth.invalidCredentials);
+        setPasskeySigningIn(false);
+        return;
+      }
+      window.location.assign(redirectTo);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '';
+      if (
+        msg.includes('NotAllowedError') ||
+        msg.includes('AbortError') ||
+        msg.includes('cancel')
+      ) {
+        // User dismissed the biometric prompt — treat as silent cancel.
+        setPasskeySigningIn(false);
+        return;
+      }
+      toast.error(t.auth.invalidCredentials);
+      setPasskeySigningIn(false);
+    }
   }
 
   return (
@@ -110,6 +145,38 @@ function LoginForm() {
         >
           {submitting && <Loader2 className="size-4 animate-spin" />}
           {submitting ? t.common.loading : t.auth.loginButton}
+        </Button>
+
+        <div className="relative">
+          <div
+            className="absolute inset-0 flex items-center"
+            aria-hidden="true"
+          >
+            <span className="w-full border-t border-slate-200" />
+          </div>
+          <div className="relative flex justify-center text-[11px]">
+            <span className="bg-white px-2 text-slate-400">
+              {t.auth.orDivider}
+            </span>
+          </div>
+        </div>
+
+        <Button
+          type="button"
+          size="lg"
+          variant="outline"
+          disabled={passkeySigningIn || submitting}
+          onClick={onPasskeySignIn}
+          className="w-full"
+        >
+          {passkeySigningIn ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <Fingerprint className="size-4" />
+          )}
+          {passkeySigningIn
+            ? t.common.loading
+            : t.auth.signInWithPasskey}
         </Button>
 
         <p className="text-center text-xs">

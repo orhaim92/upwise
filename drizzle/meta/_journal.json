@@ -78,6 +78,13 @@
       "when": 1777833623274,
       "tag": "0010_large_marvel_zombies",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1778171835444,
+      "tag": "0011_thin_karnak",
+      "breakpoints": true
     }
   ]
 }
