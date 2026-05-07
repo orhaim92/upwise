@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, lte, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { accounts, categories, transactions } from '@/lib/db/schema';
 import type { AdvisorContext } from '../wrap-tool';
@@ -8,16 +8,24 @@ type Args = {
   endDate: string;
 };
 
-// Sum negative-amount (expense) transactions per category for an arbitrary
-// date range. Restricted to CREDIT-CARD account transactions:
-//   - CC purchases carry the merchant name + category, which is what the
-//     advisor needs for "where are my biggest expenses" questions.
-//   - Including bank txs would double-count (a CC purchase shows up once
-//     as the CC tx and once again as part of the bank-side CC bill, since
-//     auto-aggregate-detection is best-effort).
-//   - Direct-from-bank expenses (rent, loans, salary debits) are still
-//     visible to the advisor via getRecurringSummary.
+// Same whitelist as the dashboard charts (src/lib/charts/queries.ts):
+//   - Every CC line item counts (each carries merchant + category)
+//   - Bank rows count only when categorized as something we KNOW is paid
+//     directly from the bank (mortgage / cash withdrawal / fees) — anything
+//     else from the bank is dropped, because it's almost always either a CC
+//     bill aggregate (would double-count) or an unflagged "דיירקט" row.
+//   - Cycle membership uses COALESCE(processedDate, date) so CC purchases
+//     land in the cycle the bank actually billed them in.
 //
+// This was the source of the discrepancy between the chart total and what
+// the advisor reported: the advisor used to be CC-only (no bank-paid
+// categories), so it underreported things like mortgage and cash withdrawal.
+const BANK_ONLY_EXPENSE_CATEGORIES = [
+  'mortgage',
+  'cash_withdrawal',
+  'fees',
+] as const;
+
 // Top 20 categories by total. Each row also carries pct of total spend
 // so the model can phrase comparisons naturally ("you spent 32% on food").
 export async function getSpendingByCategory(args: Args, ctx: AdvisorContext) {
@@ -34,12 +42,18 @@ export async function getSpendingByCategory(args: Args, ctx: AdvisorContext) {
     .where(
       and(
         eq(transactions.householdId, ctx.householdId),
-        eq(accounts.type, 'credit_card'),
-        gte(transactions.date, args.startDate),
-        lte(transactions.date, args.endDate),
+        sql`COALESCE(${transactions.processedDate}, ${transactions.date}) >= ${args.startDate}`,
+        sql`COALESCE(${transactions.processedDate}, ${transactions.date}) <= ${args.endDate}`,
         sql`${transactions.amount} < 0`,
         eq(transactions.isInternalTransfer, false),
         eq(transactions.isAggregatedCharge, false),
+        sql`(
+          ${accounts.type} = 'credit_card'
+          OR (
+            ${accounts.type} = 'bank'
+            AND ${categories.key} IN ${BANK_ONLY_EXPENSE_CATEGORIES}
+          )
+        )`,
       ),
     )
     .groupBy(categories.key, categories.icon)

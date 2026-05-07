@@ -8,13 +8,24 @@ import { colorForCategory } from '@/lib/charts/colors';
 import { formatDate, formatILS } from '@/lib/format';
 import { t } from '@/lib/i18n/he';
 import type { CategoryTxStub, DonutSlice } from '@/lib/charts/queries';
+import { InlineCategoryPicker } from './inline-category-picker';
+
+type Category = {
+  id: string;
+  key: string;
+  icon: string | null;
+  color: string | null;
+};
 
 type Props = {
   slices: DonutSlice[];
-  // Per-category transaction list (description + amount + date). When set,
-  // hovering a slice swaps the legend area to a detail panel listing the
-  // hovered category's transactions instead of the floating Recharts tooltip.
+  // Per-category transaction list (id + description + amount + date). When
+  // set, clicking a slice expands a detail panel listing the category's
+  // transactions, each with a small picker to re-categorize.
   txByCategory?: Record<string, CategoryTxStub[]>;
+  // Available categories for the inline picker. Optional — the picker is
+  // hidden if none provided.
+  categories?: Category[];
 };
 
 // Both 'uncategorized' (no category set) and 'other' (the user's "doesn't
@@ -56,7 +67,11 @@ function mergeUncategorizedIntoOther(slices: DonutSlice[]): DonutSlice[] {
 
 type ChartDatum = DonutSlice & { color: string; displayLabel: string };
 
-export function CategoryDonutChart({ slices, txByCategory }: Props) {
+export function CategoryDonutChart({
+  slices,
+  txByCategory,
+  categories,
+}: Props) {
   // Click-to-expand: clicking a slice or legend row pins the detail panel
   // until the user clicks the close button (or clicks the same slice again).
   // Switched away from hover because users wanted to scroll the transaction
@@ -219,6 +234,7 @@ export function CategoryDonutChart({ slices, txByCategory }: Props) {
                 slice={renderSlice}
                 total={total}
                 txs={renderTxs}
+                categories={categories}
                 onClose={closeDetail}
               />
             </div>
@@ -233,42 +249,52 @@ function CategoryDetailPanel({
   slice,
   total,
   txs,
+  categories,
   onClose,
 }: {
   slice: ChartDatum;
   total: number;
   txs: CategoryTxStub[];
+  categories?: Category[];
   onClose: () => void;
 }) {
   const pct = total > 0 ? ((slice.value / total) * 100).toFixed(1) : '0';
   return (
-    <div className="text-sm">
-      <div className="flex items-center gap-2 mb-1">
-        <span
-          className="size-3 rounded-sm shrink-0"
-          style={{ background: slice.color }}
-        />
-        <span className="text-lg">{slice.icon ?? '📦'}</span>
-        <span className="font-medium flex-1">{slice.displayLabel}</span>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label={t.common.close}
-          className="size-6 inline-flex items-center justify-center rounded text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition-colors shrink-0"
-        >
-          <X className="size-4" />
-        </button>
-      </div>
-      <div className="tabular-nums text-slate-700 mb-2">
-        <bdi>{formatILS(slice.value)}</bdi>{' '}
-        <span className="text-slate-500">({pct}%)</span>
+    // Bounded height with internal scroll so long category lists don't push
+    // the rest of the dashboard down. The summary header is sticky inside
+    // the scroll container so the user always sees which category they're in
+    // and the running total while scrolling through transactions.
+    <div className="text-sm max-h-96 overflow-y-auto pe-2 -me-2">
+      <div className="sticky top-0 bg-white pb-2 -mt-1 pt-1 z-10 border-b border-slate-100 mb-2">
+        <div className="flex items-center gap-2">
+          <span
+            className="size-3 rounded-sm shrink-0"
+            style={{ background: slice.color }}
+          />
+          <span className="text-lg">{slice.icon ?? '📦'}</span>
+          <span className="font-medium flex-1">{slice.displayLabel}</span>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={t.common.close}
+            className="size-6 inline-flex items-center justify-center rounded text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition-colors shrink-0"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+        <div className="tabular-nums text-slate-700 mt-1">
+          <bdi>{formatILS(slice.value)}</bdi>{' '}
+          <span className="text-slate-500">({pct}%)</span>
+        </div>
       </div>
       {txs.length > 0 ? (
-        <ul className="space-y-1 text-xs border-t border-slate-100 pt-2">
-          {txs.slice(0, 30).map((tx, i) => (
+        // Render every transaction (no +N truncation). The outer container
+        // already scrolls.
+        <ul className="space-y-1 text-xs">
+          {txs.map((tx) => (
             <li
-              key={i}
-              className="flex items-baseline justify-between gap-3"
+              key={tx.id}
+              className="flex items-baseline justify-between gap-2"
             >
               <span className="flex-1 min-w-0">
                 <span
@@ -284,18 +310,18 @@ function CategoryDetailPanel({
               <span className="tabular-nums text-slate-600 shrink-0">
                 <bdi>{formatILS(tx.amount)}</bdi>
               </span>
+              {categories && (
+                <InlineCategoryPicker
+                  transactionId={tx.id}
+                  currentCategoryKey={tx.categoryKey}
+                  categories={categories}
+                />
+              )}
             </li>
           ))}
-          {txs.length > 30 && (
-            <li className="text-[11px] text-slate-400 text-center pt-1">
-              + {txs.length - 30}
-            </li>
-          )}
         </ul>
       ) : (
-        <p className="text-xs text-slate-400 border-t border-slate-100 pt-2">
-          —
-        </p>
+        <p className="text-xs text-slate-400">—</p>
       )}
     </div>
   );

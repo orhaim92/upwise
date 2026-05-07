@@ -99,9 +99,11 @@ export async function getCurrentCycleSpendByCategory(
 }
 
 export type CategoryTxStub = {
+  id: string;
   description: string;
   amount: number; // already absolute-valued (positive)
   date: string; // 'yyyy-MM-dd'
+  categoryKey: string | null;
 };
 
 // Per-category transaction list for the hover tooltip on the donut + diff
@@ -118,6 +120,7 @@ export async function getTransactionsByCategoryForCycle(
 
   const rows = await db
     .select({
+      id: transactions.id,
       description: transactions.description,
       amount: transactions.amount,
       date: transactions.date,
@@ -144,9 +147,11 @@ export async function getTransactionsByCategoryForCycle(
     const key = r.categoryKey ?? 'uncategorized';
     if (!out[key]) out[key] = [];
     out[key].push({
+      id: r.id,
       description: r.description,
       amount: Math.abs(parseFloat(r.amount)),
       date: r.date,
+      categoryKey: r.categoryKey,
     });
   }
   return out;

@@ -5,18 +5,27 @@ import { householdMembers, pushSubscriptions } from '@/lib/db/schema';
 
 // VAPID config is set lazily on first send so a missing env var doesn't
 // crash module load (e.g., during build, or when push is unconfigured).
-let configured = false;
+//
+// `ensureConfigured()` returns false when VAPID isn't set, instead of
+// throwing — call sites already have try/catch wrappers around push, but
+// the previous throw produced a long stack trace in scheduled CI runs that
+// looked like a failure even though sync was succeeding. A clean boolean
+// short-circuit keeps the GH Actions log readable when push is intentionally
+// unconfigured (e.g. on a CI runner with no SMTP/VAPID).
+let configured: boolean | null = null;
 
-function ensureConfigured() {
-  if (configured) return;
+function ensureConfigured(): boolean {
+  if (configured !== null) return configured;
   const publicKey = process.env.VAPID_PUBLIC_KEY;
   const privateKey = process.env.VAPID_PRIVATE_KEY;
   const subject = process.env.VAPID_SUBJECT;
   if (!publicKey || !privateKey || !subject) {
-    throw new Error('VAPID env vars not configured');
+    configured = false;
+    return false;
   }
   webpush.setVapidDetails(subject, publicKey, privateKey);
   configured = true;
+  return true;
 }
 
 export type PushPayload = {
@@ -42,7 +51,11 @@ export async function sendPushToSubscription(
   sub: SubscriptionRow,
   payload: PushPayload,
 ): Promise<{ ok: boolean; error?: string; gone?: boolean }> {
-  ensureConfigured();
+  // Silently skip when VAPID isn't configured (e.g. on a CI runner that
+  // doesn't have the env vars). Caller checks `ok` already.
+  if (!ensureConfigured()) {
+    return { ok: false, error: 'push_not_configured' };
+  }
 
   const pushSub = {
     endpoint: sub.endpoint,

@@ -21,12 +21,12 @@ import {
 } from '@/lib/cycles/billing-cycle';
 import {
   getCurrentCycleSpendByCategory,
-  getCycleSpendComparison,
   getMonthOverMonthDiff,
   getMonthlyTrend,
   getTransactionsByCategoryForCycle,
   rangeToMonths,
 } from '@/lib/charts/queries';
+import { listCategoriesForHousehold } from '@/app/(app)/transactions/actions';
 import { Card } from '@/components/ui/card';
 import { buttonVariants } from '@/components/ui/button';
 import { SyncButton } from '@/components/sync-button';
@@ -144,9 +144,9 @@ export default async function DashboardPage({ searchParams }: Props) {
   const today = new Date();
 
   // The dashboard's allowance/math card always pins to the *current* cycle.
-  // The donut + forecast charts target a navigable cycle (offset 0 is current,
-  // negative goes back through history). Trend/diff are intrinsically
-  // multi-month and ignore the offset.
+  // The donut targets a navigable cycle (offset 0 is current, negative goes
+  // back through history). Trend/diff are intrinsically multi-month and
+  // ignore the offset.
   const isCurrentCycle = cycleOffset === 0;
   const chartCycle = isCurrentCycle
     ? allowance.cycle
@@ -155,19 +155,14 @@ export default async function DashboardPage({ searchParams }: Props) {
         subMonths(today, -cycleOffset),
       );
 
-  // For past cycles, the comparison query treats "today" as the end of the
-  // cycle so the actual side reflects the full realized total.
-  const comparisonToday = isCurrentCycle ? today : chartCycle.endDate;
-
   const [
     donutSlices,
-    comparisonData,
     trendData,
     diffData,
     txByCategory,
+    categoriesForPicker,
   ] = await Promise.all([
     getCurrentCycleSpendByCategory(householdId, chartCycle),
-    getCycleSpendComparison(householdId, chartCycle, comparisonToday),
     getMonthlyTrend(
       householdId,
       rangeToMonths(range),
@@ -175,6 +170,7 @@ export default async function DashboardPage({ searchParams }: Props) {
     ),
     getMonthOverMonthDiff(householdId, household.billingCycleStartDay, today),
     getTransactionsByCategoryForCycle(householdId, chartCycle),
+    listCategoriesForHousehold(),
   ]);
   const cycleRangeLabel = formatCycleRange(chartCycle);
 
@@ -214,10 +210,10 @@ export default async function DashboardPage({ searchParams }: Props) {
 
       <DashboardCharts
         donutSlices={donutSlices}
-        comparisonData={comparisonData}
         trendData={trendData}
         diffData={diffData}
         txByCategory={txByCategory}
+        categories={categoriesForPicker}
         initialRange={range}
         cycleOffset={cycleOffset}
         cycleRangeLabel={cycleRangeLabel}

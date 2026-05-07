@@ -203,8 +203,22 @@ export async function syncAccount(
 export async function syncAllAccounts(
   householdId: string,
 ): Promise<AccountSyncResult[]> {
+  // SYNC_SKIP_PROVIDERS lets a scheduled / CI run opt out of providers that
+  // always 403 from cloud IPs (Isracard, Amex, Visa Cal — they geo/IP-fence
+  // their login pages). Set in the GH Actions workflow env, NOT in local
+  // .env, so local manual runs still hit every account. Comma-separated
+  // provider ids: e.g. SYNC_SKIP_PROVIDERS=isracard,amex,visaCal
+  const skipProviders = (process.env.SYNC_SKIP_PROVIDERS ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+
   const accs = await db
-    .select({ id: accounts.id })
+    .select({
+      id: accounts.id,
+      provider: accounts.provider,
+      displayName: accounts.displayName,
+    })
     .from(accounts)
     .where(
       and(eq(accounts.householdId, householdId), eq(accounts.isActive, true)),
@@ -212,6 +226,14 @@ export async function syncAllAccounts(
 
   const results: AccountSyncResult[] = [];
   for (const acc of accs) {
+    if (skipProviders.includes(acc.provider)) {
+      if (process.env.NODE_ENV !== 'production') {
+        console.log(
+          `[sync] skipping ${acc.displayName} (provider=${acc.provider}; in SYNC_SKIP_PROVIDERS)`,
+        );
+      }
+      continue;
+    }
     const r = await syncAccount(acc.id, householdId);
     results.push(r);
   }

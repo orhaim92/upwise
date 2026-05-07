@@ -6,7 +6,6 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import type {
   CategoryDiff,
   CategoryTxStub,
-  CycleSpendComparison,
   DonutSlice,
   TrendPoint,
 } from '@/lib/charts/queries';
@@ -20,13 +19,6 @@ import { CycleNavigator } from './cycle-navigator';
 // container has real dimensions.
 const CategoryDonutChart = dynamic(
   () => import('./category-donut-chart').then((m) => m.CategoryDonutChart),
-  { ssr: false, loading: () => <ChartSkeleton /> },
-);
-const CycleSpendComparisonChart = dynamic(
-  () =>
-    import('./cycle-spend-comparison-chart').then(
-      (m) => m.CycleSpendComparisonChart,
-    ),
   { ssr: false, loading: () => <ChartSkeleton /> },
 );
 const MonthlyTrendChart = dynamic(
@@ -47,12 +39,20 @@ function ChartSkeleton() {
   );
 }
 
+type Category = {
+  id: string;
+  key: string;
+  icon: string | null;
+  color: string | null;
+};
+
 type Props = {
   donutSlices: DonutSlice[];
-  comparisonData: CycleSpendComparison;
   trendData: TrendPoint[];
   diffData: CategoryDiff[];
   txByCategory: Record<string, CategoryTxStub[]>;
+  // Available categories for the inline picker shown inside chart popups.
+  categories: Category[];
   initialRange: ChartRange;
   cycleOffset: number;
   cycleRangeLabel: string;
@@ -60,10 +60,10 @@ type Props = {
 
 export function DashboardCharts({
   donutSlices,
-  comparisonData,
   trendData,
   diffData,
   txByCategory,
+  categories,
   initialRange,
   cycleOffset,
   cycleRangeLabel,
@@ -92,13 +92,11 @@ export function DashboardCharts({
         offset={cycleOffset}
         cycleRangeLabel={cycleRangeLabel}
       />
-      <div className="grid gap-4 lg:grid-cols-2">
-        <CategoryDonutChart
-          slices={donutSlices}
-          txByCategory={txByCategory}
-        />
-        <CycleSpendComparisonChart data={comparisonData} />
-      </div>
+      <CategoryDonutChart
+        slices={donutSlices}
+        txByCategory={txByCategory}
+        categories={categories}
+      />
 
       <MonthlyTrendChart
         data={trendData}
@@ -106,7 +104,11 @@ export function DashboardCharts({
         onRangeChange={handleRangeChange}
       />
 
-      <CategoryDiffChart diffs={diffData} txByCategory={txByCategory} />
+      <CategoryDiffChart
+        diffs={diffData}
+        txByCategory={txByCategory}
+        categories={categories}
+      />
     </div>
   );
 }

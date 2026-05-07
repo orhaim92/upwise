@@ -111,6 +111,15 @@ function LoginForm() {
           {submitting && <Loader2 className="size-4 animate-spin" />}
           {submitting ? t.common.loading : t.auth.loginButton}
         </Button>
+
+        <p className="text-center text-xs">
+          <Link
+            href="/forgot-password"
+            className="text-slate-500 hover:text-violet-600 hover:underline"
+          >
+            {t.auth.forgotPassword}
+          </Link>
+        </p>
       </form>
 
       <p className="text-center text-sm text-slate-600">

@@ -97,3 +97,65 @@ export async function sendInvitationEmail(params: {
 
   return true;
 }
+
+// Password reset email. Returns false (silently) if SMTP isn't configured —
+// the caller treats both "user not found" and "email send failed" as
+// non-errors so the UI can't be used to enumerate accounts.
+export async function sendPasswordResetEmail(params: {
+  to: string;
+  link: string;
+}): Promise<boolean> {
+  const t = getTransporter();
+  if (!t) {
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(
+        '[email] SMTP not configured — password reset link:',
+        params.link,
+      );
+    }
+    return false;
+  }
+
+  const subject = 'איפוס סיסמה ב-UpWise';
+  const text = [
+    'שלום,',
+    '',
+    'קיבלנו בקשה לאיפוס הסיסמה לחשבון שלך ב-UpWise.',
+    '',
+    'לחץ על הקישור הבא כדי להגדיר סיסמה חדשה:',
+    params.link,
+    '',
+    'הקישור תקף שעה אחת בלבד.',
+    '',
+    'אם לא ביקשת איפוס סיסמה, ניתן להתעלם מהמייל הזה — הסיסמה לא תשתנה.',
+  ].join('\n');
+
+  const html = `
+<!doctype html>
+<html lang="he" dir="rtl">
+<head><meta charset="utf-8"><title>${subject}</title></head>
+<body style="font-family:system-ui,Arial,sans-serif;background:#f8fafc;margin:0;padding:24px;">
+  <div style="max-width:520px;margin:0 auto;background:#fff;border-radius:16px;padding:32px;box-shadow:0 1px 2px rgba(0,0,0,0.04);">
+    <h1 style="font-size:20px;margin:0 0 16px;background:linear-gradient(to left,#3b82f6,#7c3aed);-webkit-background-clip:text;background-clip:text;color:transparent;">UpWise</h1>
+    <p style="color:#0f172a;font-size:16px;margin:0 0 12px;">קיבלנו בקשה לאיפוס הסיסמה לחשבון שלך.</p>
+    <p style="color:#475569;font-size:14px;margin:0 0 24px;">לחץ על הכפתור כדי להגדיר סיסמה חדשה. הקישור תקף שעה אחת.</p>
+    <p style="margin:0 0 24px;">
+      <a href="${params.link}" style="display:inline-block;background:#7c3aed;color:#fff;text-decoration:none;padding:12px 20px;border-radius:10px;font-weight:600;">אפס סיסמה</a>
+    </p>
+    <p style="color:#94a3b8;font-size:12px;margin:0;">או העתק את הקישור הבא:</p>
+    <p style="color:#475569;font-size:12px;word-break:break-all;direction:ltr;text-align:left;margin:6px 0 24px;font-family:monospace;">${params.link}</p>
+    <p style="color:#94a3b8;font-size:12px;margin:0;">אם לא ביקשת איפוס — ניתן להתעלם. הסיסמה הקיימת לא תשתנה.</p>
+  </div>
+</body>
+</html>`.trim();
+
+  await t.sendMail({
+    from: getFrom(),
+    to: params.to,
+    subject,
+    text,
+    html,
+  });
+
+  return true;
+}

@@ -16,12 +16,22 @@ import { CHART_AXIS, CHART_GRID } from '@/lib/charts/colors';
 import { formatDate, formatILS } from '@/lib/format';
 import { t } from '@/lib/i18n/he';
 import type { CategoryDiff, CategoryTxStub } from '@/lib/charts/queries';
+import { InlineCategoryPicker } from './inline-category-picker';
+
+type Category = {
+  id: string;
+  key: string;
+  icon: string | null;
+  color: string | null;
+};
 
 type Props = {
   diffs: CategoryDiff[];
   // Per-category transaction list for the current cycle; surfaces in the
-  // hover tooltip so the user can see what's in each category.
+  // expanded panel so the user can see what's in each category.
   txByCategory?: Record<string, CategoryTxStub[]>;
+  // Available categories for the inline picker shown per transaction row.
+  categories?: Category[];
 };
 
 // 'uncategorized' (no category set) and 'other' (user's catch-all pick) are
@@ -62,7 +72,11 @@ function mergeUncategorizedIntoOther(diffs: CategoryDiff[]): CategoryDiff[] {
   return out.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
 }
 
-export function CategoryDiffChart({ diffs, txByCategory }: Props) {
+export function CategoryDiffChart({
+  diffs,
+  txByCategory,
+  categories,
+}: Props) {
   // Click-to-expand: clicking a bar pins the detail panel. Same UX as the
   // donut so users have one mental model for "drill into a category".
   const [activeKey, setActiveKey] = useState<string | null>(null);
@@ -99,7 +113,7 @@ export function CategoryDiffChart({ diffs, txByCategory }: Props) {
 
   const data = merged.map((d) => ({
     key: d.key,
-    label: `${d.icon ?? '📦'} ${labelMap[d.key] ?? d.key}`,
+    label: wrapRtl(`${labelMap[d.key] ?? d.key} ${d.icon ?? '📦'}`),
     previous: d.previous,
     current: d.current,
     delta: d.delta,
@@ -123,12 +137,37 @@ export function CategoryDiffChart({ diffs, txByCategory }: Props) {
 
   return (
     <ChartCard title={t.charts.diffTitle} subtitle={t.charts.diffSubtitle}>
-      <div className="pe-3 max-h-[520px] overflow-y-auto" style={{ height: innerHeight }}>
+      {/* Suppress every focus outline browsers paint on Recharts elements
+          when a bar is clicked. The bar-rectangle path AND the SVG surface
+          itself can receive focus depending on the browser; both produced
+          a visible dark frame around the plot area on click. The
+          !important is unfortunate but Recharts injects inline outline-* on
+          some browsers so a normal selector loses the cascade. */}
+      <style>{`
+        .recharts-wrapper :focus,
+        .recharts-wrapper :focus-visible,
+        .recharts-surface,
+        .recharts-surface :focus,
+        .recharts-surface :focus-visible {
+          outline: none !important;
+        }
+      `}</style>
+      {/* Negative margin-inline-start (right side in RTL) lets the chart
+          bleed past the card's p-5 padding on the right edge — that 20px
+          was visible empty space between the labels and the card border. */}
+      <div
+        className="max-h-[520px] overflow-y-auto -ms-5"
+        style={{ height: innerHeight }}
+      >
         <ResponsiveContainer width="100%" height="100%">
           <BarChart
             data={data}
             layout="vertical"
-            margin={{ top: 5, right: 60, left: 5, bottom: 5 }}
+            // Tight right margin so labels hug the card's right edge — there
+            // were ~36px of dead space (chart margin + card padding) on the
+            // right that pushed the label column off-screen-end. Bars get
+            // proportionally more room.
+            margin={{ top: 5, right: 4, left: 4, bottom: 5 }}
             barCategoryGap="25%"
           >
             <CartesianGrid
@@ -146,16 +185,20 @@ export function CategoryDiffChart({ diffs, txByCategory }: Props) {
             <YAxis
               type="category"
               dataKey="label"
-              tick={{ fontSize: 12, fill: '#334155' }}
               axisLine={false}
               tickLine={false}
-              width={120}
+              // 130px gives the longest Hebrew labels ("הוצאת מזומן",
+              // "חשבונות בית") room to fit on a single line at 11px.
+              width={130}
               orientation="right"
-              // Force every category label to render. Without this, Recharts
-              // auto-decimates labels when the chart can't fit them all
-              // (1-row-on, 1-row-off pattern), so half the categories looked
-              // unlabeled. The card's per-row height (44px) ensures there's
-              // always room for the text now.
+              // Right-anchor each label inside its column. Bidi consistency
+              // (so short labels don't bounce around horizontally vs. long
+              // ones) is handled by wrapping each label string in RLE…PDF
+              // unicode controls when we build the chart data — see the
+              // `wrapRtl` helper above.
+              tick={{ fontSize: 11, fill: '#334155', textAnchor: 'end' }}
+              // interval=0 forces every category label to render — Recharts
+              // would otherwise auto-decimate (1-on/1-off) when many bars.
               interval={0}
             />
             {/* No Recharts <Tooltip>. We render a sticky panel below
@@ -172,6 +215,9 @@ export function CategoryDiffChart({ diffs, txByCategory }: Props) {
               fill="#CBD5E1"
               radius={[0, 4, 4, 0]}
               cursor="pointer"
+              // Visual feedback on hover: darken slightly + outline the
+              // hovered bar so the user knows what they're about to click.
+              activeBar={{ fill: '#94A3B8', stroke: '#475569', strokeWidth: 1 }}
               onClick={(payload) => {
                 const key = (payload as { key?: string })?.key;
                 if (key) toggleRow(key);
@@ -183,6 +229,7 @@ export function CategoryDiffChart({ diffs, txByCategory }: Props) {
               fill="#7C3AED"
               radius={[0, 4, 4, 0]}
               cursor="pointer"
+              activeBar={{ fill: '#6D28D9', stroke: '#4C1D95', strokeWidth: 1 }}
               onClick={(payload) => {
                 const key = (payload as { key?: string })?.key;
                 if (key) toggleRow(key);
@@ -218,6 +265,7 @@ export function CategoryDiffChart({ diffs, txByCategory }: Props) {
                     row={row}
                     label={row.label}
                     txs={txMap[row.key] ?? []}
+                    categories={categories}
                     onClose={closeDetail}
                   />
                 </div>
@@ -234,63 +282,73 @@ function DiffDetailPanel({
   row,
   label,
   txs,
+  categories,
   onClose,
 }: {
   row: { key: string; previous: number; current: number; delta: number };
   label: string;
   txs: CategoryTxStub[];
+  categories?: Category[];
   onClose: () => void;
 }) {
   return (
-    <div className="text-sm" style={{ direction: 'rtl' }}>
-      <div className="flex items-center gap-2 mb-2">
-        <span className="font-medium flex-1">{label}</span>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label={t.common.close}
-          className="size-6 inline-flex items-center justify-center rounded text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition-colors shrink-0"
-        >
-          <X className="size-4" />
-        </button>
-      </div>
-      <div className="grid grid-cols-3 gap-3 text-xs mb-3">
-        <div>
-          <div className="text-slate-500">{t.charts.diffPrevious}</div>
-          <div className="tabular-nums font-medium mt-0.5">
-            <bdi>{formatILS(row.previous)}</bdi>
-          </div>
-        </div>
-        <div>
-          <div className="text-slate-500">{t.charts.diffCurrent}</div>
-          <div className="tabular-nums font-medium mt-0.5">
-            <bdi>{formatILS(row.current)}</bdi>
-          </div>
-        </div>
-        <div>
-          <div className="text-slate-500">{t.charts.diffChangeLabel}</div>
-          <div
-            className={`tabular-nums font-medium mt-0.5 ${
-              row.delta > 0
-                ? 'text-rose-600'
-                : row.delta < 0
-                  ? 'text-emerald-600'
-                  : ''
-            }`}
+    // Bounded height with a single scroll context. The summary header (label,
+    // prev/current/delta) is sticky inside the scroll, so the user always
+    // sees what they're looking at while paging through the transactions.
+    <div
+      className="text-sm max-h-96 overflow-y-auto pe-2 -me-2"
+      style={{ direction: 'rtl' }}
+    >
+      <div className="sticky top-0 bg-white pb-2 -mt-1 pt-1 z-10 border-b border-slate-100 mb-3">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="font-medium flex-1">{label}</span>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={t.common.close}
+            className="size-6 inline-flex items-center justify-center rounded text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition-colors shrink-0"
           >
-            <bdi>
-              {row.delta > 0 ? '+' : ''}
-              {formatILS(row.delta)}
-            </bdi>
+            <X className="size-4" />
+          </button>
+        </div>
+        <div className="grid grid-cols-3 gap-3 text-xs">
+          <div>
+            <div className="text-slate-500">{t.charts.diffPrevious}</div>
+            <div className="tabular-nums font-medium mt-0.5">
+              <bdi>{formatILS(row.previous)}</bdi>
+            </div>
+          </div>
+          <div>
+            <div className="text-slate-500">{t.charts.diffCurrent}</div>
+            <div className="tabular-nums font-medium mt-0.5">
+              <bdi>{formatILS(row.current)}</bdi>
+            </div>
+          </div>
+          <div>
+            <div className="text-slate-500">{t.charts.diffChangeLabel}</div>
+            <div
+              className={`tabular-nums font-medium mt-0.5 ${
+                row.delta > 0
+                  ? 'text-rose-600'
+                  : row.delta < 0
+                    ? 'text-emerald-600'
+                    : ''
+              }`}
+            >
+              <bdi>
+                {row.delta > 0 ? '+' : ''}
+                {formatILS(row.delta)}
+              </bdi>
+            </div>
           </div>
         </div>
       </div>
       {txs.length > 0 ? (
-        <ul className="space-y-1 max-h-56 overflow-y-auto pe-1 -me-1 border-t border-slate-100 pt-2">
-          {txs.slice(0, 30).map((tx, i) => (
+        <ul className="space-y-1">
+          {txs.map((tx) => (
             <li
-              key={i}
-              className="flex items-baseline justify-between gap-3 text-xs"
+              key={tx.id}
+              className="flex items-baseline justify-between gap-2 text-xs"
             >
               <span className="flex-1 min-w-0">
                 <span
@@ -306,19 +364,32 @@ function DiffDetailPanel({
               <span className="tabular-nums text-slate-500 shrink-0">
                 <bdi>{formatILS(tx.amount)}</bdi>
               </span>
+              {categories && (
+                <InlineCategoryPicker
+                  transactionId={tx.id}
+                  currentCategoryKey={tx.categoryKey}
+                  categories={categories}
+                />
+              )}
             </li>
           ))}
-          {txs.length > 30 && (
-            <li className="text-[11px] text-slate-400 text-center pt-1">
-              + {txs.length - 30}
-            </li>
-          )}
         </ul>
       ) : (
-        <p className="text-xs text-slate-400 border-t border-slate-100 pt-2">
-          —
-        </p>
+        <p className="text-xs text-slate-400">—</p>
       )}
     </div>
   );
+}
+
+// Wrap a label string with RIGHT-TO-LEFT EMBEDDING (U+202B) +
+// POP DIRECTIONAL FORMATTING (U+202C). This forces every label to be
+// laid out with an explicit RTL base, regardless of which character class
+// (Hebrew letter, emoji, ASCII) appears first in the source string. Without
+// this wrap, the unicode bidi algorithm can flip the icon-vs-Hebrew run
+// order based on which char class the label happens to start with, which
+// made short and long labels right-align at slightly different X positions.
+const RLE = '‫';
+const PDF = '‬';
+function wrapRtl(s: string): string {
+  return `${RLE}${s}${PDF}`;
 }

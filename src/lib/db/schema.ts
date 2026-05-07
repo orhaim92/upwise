@@ -23,6 +23,23 @@ export const users = pgTable('users', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+// Per-request password reset tokens. The plaintext token is sent in the
+// reset link; only its hash lives in the DB so a leaked DB row can't be
+// used directly. Tokens are single-use (cleared on successful reset) and
+// short-lived (~1 hour) — same shape as householdInvitations below.
+export const passwordResetTokens = pgTable('password_reset_tokens', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  tokenHash: text('token_hash').notNull().unique(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  usedAt: timestamp('used_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
+
 export const households = pgTable('households', {
   id: uuid('id').defaultRandom().primaryKey(),
   name: text('name').notNull(),
