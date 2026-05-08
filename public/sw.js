@@ -1,8 +1,12 @@
 // UpWise service worker — Phase 7
 //
 // Caching strategy:
-//   - App shell (HTML/CSS/JS chunks): Cache First with revalidation
-//   - Dashboard + transactions data routes: Stale While Revalidate
+//   - App shell (Next chunks, icons, manifest): Cache First
+//   - Authenticated pages (/dashboard, /transactions, ...): Network First
+//     so a refresh always hits the server. Cache only used for offline
+//     fallback. Earlier we used stale-while-revalidate here, which served
+//     a stale HTML response after the JWT had expired — the user could
+//     keep seeing the dashboard for hours past the 30-min timeout.
 //   - All other GET requests: Network First → cache fallback
 //   - Mutations (non-GET): never cached, fail loudly when offline
 //
@@ -11,8 +15,10 @@
 //   - On `notificationclick`, focus an existing tab or open the target URL
 
 // Bump this when the cache shape needs invalidation. Old caches are
-// pruned in `activate`.
-const CACHE_VERSION = 'v1';
+// pruned in `activate`. v2 invalidates the v1 stale-while-revalidate
+// cache so existing users stop seeing stale authenticated pages after
+// session expiry.
+const CACHE_VERSION = 'v2';
 const SHELL_CACHE = `upwise-shell-${CACHE_VERSION}`;
 const DATA_CACHE = `upwise-data-${CACHE_VERSION}`;
 
@@ -60,13 +66,16 @@ self.addEventListener('fetch', (event) => {
   // here. Caching them would silently serve stale state on refresh.
   if (url.pathname.startsWith('/api/')) return;
 
-  // Stale-while-revalidate for the cacheable read views.
+  // Network-first for authenticated read views: an online refresh must
+  // always hit the server so an expired session redirects to /login.
+  // Cache only acts as the offline fallback. Don't cache redirect or
+  // error responses — `fresh.ok` already filters those out below.
   if (
     CACHEABLE_DATA_PATHS.some(
       (p) => url.pathname === p || url.pathname.startsWith(p + '/'),
     )
   ) {
-    event.respondWith(staleWhileRevalidate(req, DATA_CACHE));
+    event.respondWith(networkFirst(req, DATA_CACHE));
     return;
   }
 

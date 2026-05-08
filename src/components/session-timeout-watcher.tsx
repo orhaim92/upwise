@@ -31,6 +31,21 @@ export function SessionTimeoutWatcher() {
   const [extending, setExtending] = useState(false);
   const [remainingMs, setRemainingMs] = useState<number | null>(null);
   const expiredRef = useRef(false);
+  // Did we ever observe an authenticated session? If so, a transition to
+  // 'unauthenticated' means the session expired (or was revoked elsewhere)
+  // — kick the user to /login so they can't keep interacting with a stale
+  // SSR'd page.
+  const everAuthedRef = useRef(false);
+
+  useEffect(() => {
+    if (status === 'authenticated') {
+      everAuthedRef.current = true;
+      return;
+    }
+    if (status === 'unauthenticated' && everAuthedRef.current) {
+      signOut({ callbackUrl: '/login', redirect: true });
+    }
+  }, [status]);
 
   useEffect(() => {
     if (status !== 'authenticated' || !session?.expires) return;
