@@ -4,6 +4,8 @@ import { Button } from '@/components/ui/button';
 import { MainNav } from './_components/main-nav';
 import { OfflineBanner } from '@/components/pwa/offline-banner';
 import { InstallPrompt } from '@/components/pwa/install-prompt';
+import { SessionProvider } from '@/components/session-provider';
+import { SessionTimeoutWatcher } from '@/components/session-timeout-watcher';
 import { advisorEnabled } from '@/lib/features';
 import { t } from '@/lib/i18n/he';
 
@@ -32,17 +34,20 @@ export default async function AppLayout({
   );
 
   return (
-    <div className="min-h-screen flex flex-col">
-      <MainNav
-        userName={session.user.name}
-        signOutForm={signOutForm}
-        advisorEnabled={advisorEnabled()}
-      />
-      <main className="flex-1 max-w-6xl mx-auto w-full p-4 md:p-6">
-        {children}
-      </main>
-      <OfflineBanner />
-      <InstallPrompt />
-    </div>
+    <SessionProvider>
+      <div className="min-h-screen flex flex-col">
+        <MainNav
+          userName={session.user.name}
+          signOutForm={signOutForm}
+          advisorEnabled={advisorEnabled()}
+        />
+        <main className="flex-1 max-w-6xl mx-auto w-full p-4 md:p-6">
+          {children}
+        </main>
+        <OfflineBanner />
+        <InstallPrompt />
+        <SessionTimeoutWatcher />
+      </div>
+    </SessionProvider>
   );
 }

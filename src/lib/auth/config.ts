@@ -9,7 +9,12 @@ import { verifyAuthentication } from './webauthn/server';
 import { readAndClearChallenge } from './webauthn/challenge';
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  session: { strategy: 'jwt', maxAge: 7 * 24 * 60 * 60 },
+  // 30-minute idle expiry. The client mounts a watcher that prompts the
+  // user to extend ~2 min before this elapses; on confirm it calls
+  // update() which re-mints the JWT with a fresh exp. updateAge stays at
+  // the default (24h), so the session does NOT silently extend on every
+  // server request — the popup is the only way to keep going past 30 min.
+  session: { strategy: 'jwt', maxAge: 30 * 60 },
   pages: {
     signIn: '/login',
   },

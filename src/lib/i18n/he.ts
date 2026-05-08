@@ -41,6 +41,13 @@ export const t = {
     orDivider: 'או',
     signInWithPasskey: 'התחבר עם טביעת אצבע',
   },
+  session: {
+    expiringTitle: 'הסשן עומד להסתיים',
+    expiringBody:
+      'מסיבות אבטחה תנותק בקרוב. רוצה להמשיך להישאר מחובר?',
+    stayLoggedIn: 'המשך',
+    signOutNow: 'התנתק עכשיו',
+  },
   dashboard: {
     title: 'דשבורד',
     welcome: 'ברוך הבא',
