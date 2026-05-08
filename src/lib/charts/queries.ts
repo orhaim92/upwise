@@ -15,6 +15,7 @@ import {
   enumerateOccurrences,
   hasOccurrenceInWindow,
 } from '@/lib/cycles/frequency';
+import { effectiveCycleDateSql } from './effective-date';
 
 // Whitelist of expense categories that we trust come straight from the bank
 // (not paid via credit card). Anything outside this list, when found on a
@@ -52,9 +53,11 @@ export type DonutSlice = {
 export async function getCurrentCycleSpendByCategory(
   householdId: string,
   cycle: BillingCycle,
+  immediateCards: readonly string[] = [],
 ): Promise<DonutSlice[]> {
   const startStr = format(cycle.startDate, 'yyyy-MM-dd');
   const endStr = format(cycle.endDate, 'yyyy-MM-dd');
+  const effectiveDate = effectiveCycleDateSql(immediateCards);
 
   // Whitelisted view: every CC line item, plus bank rows only when their
   // category is something we know is bank-paid (mortgage, cash withdrawal,
@@ -73,8 +76,8 @@ export async function getCurrentCycleSpendByCategory(
     .where(
       and(
         eq(transactions.householdId, householdId),
-        sql`COALESCE(${transactions.processedDate}, ${transactions.date}) >= ${startStr}`,
-        sql`COALESCE(${transactions.processedDate}, ${transactions.date}) <= ${endStr}`,
+        sql`${effectiveDate} >= ${startStr}`,
+        sql`${effectiveDate} <= ${endStr}`,
         sql`${transactions.amount} < 0`,
         eq(transactions.isInternalTransfer, false),
         eq(transactions.isAggregatedCharge, false),
@@ -114,19 +117,23 @@ export type CategoryTxStub = {
 export async function getTransactionsByCategoryForCycle(
   householdId: string,
   cycle: BillingCycle,
+  immediateCards: readonly string[] = [],
 ): Promise<Record<string, CategoryTxStub[]>> {
   const startStr = format(cycle.startDate, 'yyyy-MM-dd');
   const endStr = format(cycle.endDate, 'yyyy-MM-dd');
+  const effectiveDate = effectiveCycleDateSql(immediateCards);
 
-  // Display the effective date (what the filter buckets by), not the raw
-  // purchase date — otherwise CC line items show their April purchase date
-  // even though they only land in the May cycle when the bank pays the bill.
+  // Filter by effective date (CC items land in the cycle their bill is paid
+  // in; immediate-charge cards land on the purchase date) but display the
+  // purchase date — that's the date the user remembers. Showing
+  // processed_date here would collapse every CC item to the bill-payment
+  // day, which is misleading.
   const rows = await db
     .select({
       id: transactions.id,
       description: transactions.description,
       amount: transactions.amount,
-      date: sql<string>`COALESCE(${transactions.processedDate}, ${transactions.date})`,
+      date: transactions.date,
       categoryKey: categories.key,
     })
     .from(transactions)
@@ -135,17 +142,15 @@ export async function getTransactionsByCategoryForCycle(
     .where(
       and(
         eq(transactions.householdId, householdId),
-        sql`COALESCE(${transactions.processedDate}, ${transactions.date}) >= ${startStr}`,
-        sql`COALESCE(${transactions.processedDate}, ${transactions.date}) <= ${endStr}`,
+        sql`${effectiveDate} >= ${startStr}`,
+        sql`${effectiveDate} <= ${endStr}`,
         sql`${transactions.amount} < 0`,
         eq(transactions.isInternalTransfer, false),
         eq(transactions.isAggregatedCharge, false),
         expenseRowFilter,
       ),
     )
-    .orderBy(
-      desc(sql`COALESCE(${transactions.processedDate}, ${transactions.date})`),
-    );
+    .orderBy(desc(transactions.date));
 
   const out: Record<string, CategoryTxStub[]> = {};
   for (const r of rows) {
@@ -189,9 +194,11 @@ export async function getCycleSpendComparison(
   householdId: string,
   cycle: BillingCycle,
   today: Date = new Date(),
+  immediateCards: readonly string[] = [],
 ): Promise<CycleSpendComparison> {
   const startStr = format(cycle.startDate, 'yyyy-MM-dd');
   const endStr = format(cycle.endDate, 'yyyy-MM-dd');
+  const effectiveDate = effectiveCycleDateSql(immediateCards);
 
   // 1. Expected recurring: walk every active confirmed expense rule and ask
   // how many times it occurs inside the cycle window. Sum amount × occurrences.
@@ -234,8 +241,8 @@ export async function getCycleSpendComparison(
     .where(
       and(
         eq(transactions.householdId, householdId),
-        sql`COALESCE(${transactions.processedDate}, ${transactions.date}) >= ${startStr}`,
-        sql`COALESCE(${transactions.processedDate}, ${transactions.date}) <= ${endStr}`,
+        sql`${effectiveDate} >= ${startStr}`,
+        sql`${effectiveDate} <= ${endStr}`,
         sql`${transactions.amount} < 0`,
         eq(transactions.isInternalTransfer, false),
         eq(transactions.isAggregatedCharge, false),
@@ -291,16 +298,18 @@ export async function getCycleForecast(
   householdId: string,
   cycle: BillingCycle,
   today: Date = new Date(),
+  immediateCards: readonly string[] = [],
 ): Promise<ForecastPoint[]> {
   const startStr = format(cycle.startDate, 'yyyy-MM-dd');
   const todayStr = format(today, 'yyyy-MM-dd');
+  const effectiveDate = effectiveCycleDateSql(immediateCards);
 
   // Same whitelist filter as the donut (CC line items + bank rows in the
   // bank-paid category list). Keeps the forecast's actuals line consistent
   // with the donut total at any point on the timeline.
   const txs = await db
     .select({
-      effectiveDate: sql<string>`COALESCE(${transactions.processedDate}, ${transactions.date})`,
+      effectiveDate: sql<string>`${effectiveDate}`,
       amount: transactions.amount,
     })
     .from(transactions)
@@ -309,8 +318,8 @@ export async function getCycleForecast(
     .where(
       and(
         eq(transactions.householdId, householdId),
-        sql`COALESCE(${transactions.processedDate}, ${transactions.date}) >= ${startStr}`,
-        sql`COALESCE(${transactions.processedDate}, ${transactions.date}) <= ${todayStr}`,
+        sql`${effectiveDate} >= ${startStr}`,
+        sql`${effectiveDate} <= ${todayStr}`,
         sql`${transactions.amount} < 0`,
         eq(transactions.isInternalTransfer, false),
         eq(transactions.isAggregatedCharge, false),
@@ -613,6 +622,7 @@ export async function getMonthOverMonthDiff(
   householdId: string,
   cycleStartDay: number,
   today: Date = new Date(),
+  immediateCards: readonly string[] = [],
 ): Promise<CategoryDiff[]> {
   const currentCycle = getActiveBillingCycle(cycleStartDay, today);
   const prevCycle = getActiveBillingCycle(
@@ -628,6 +638,7 @@ export async function getMonthOverMonthDiff(
   );
   const prevStart = format(prevCycle.startDate, 'yyyy-MM-dd');
   const prevEnd = format(prevCycle.endDate, 'yyyy-MM-dd');
+  const effectiveDate = effectiveCycleDateSql(immediateCards);
 
   // Same whitelist filter as the donut/forecast/trend.
   async function categorySpend(start: string, end: string) {
@@ -643,8 +654,8 @@ export async function getMonthOverMonthDiff(
       .where(
         and(
           eq(transactions.householdId, householdId),
-          sql`COALESCE(${transactions.processedDate}, ${transactions.date}) >= ${start}`,
-          sql`COALESCE(${transactions.processedDate}, ${transactions.date}) <= ${end}`,
+          sql`${effectiveDate} >= ${start}`,
+          sql`${effectiveDate} <= ${end}`,
           sql`${transactions.amount} < 0`,
           eq(transactions.isInternalTransfer, false),
           eq(transactions.isAggregatedCharge, false),

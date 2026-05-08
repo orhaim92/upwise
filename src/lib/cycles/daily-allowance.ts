@@ -67,8 +67,13 @@ export async function computeDailyAllowance(
   householdId: string,
   cycleStartDay: number,
   today: Date = new Date(),
+  // Optional pre-resolved cycle (e.g. from auto-detect). If provided we use
+  // it as-is; otherwise we fall back to the day-anchored cycle. Lets the
+  // caller decide whether the cycle should follow the actual salary date.
+  precomputedCycle?: BillingCycle,
 ): Promise<DailyAllowance> {
-  const cycle = getActiveBillingCycle(cycleStartDay, today);
+  const cycle =
+    precomputedCycle ?? getActiveBillingCycle(cycleStartDay, today);
   const startStr = format(cycle.startDate, 'yyyy-MM-dd');
   const todayStr = format(today, 'yyyy-MM-dd');
 

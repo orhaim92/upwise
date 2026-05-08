@@ -19,6 +19,7 @@ import {
   formatCycleRange,
   getActiveBillingCycle,
 } from '@/lib/cycles/billing-cycle';
+import { resolveActiveBillingCycle } from '@/lib/cycles/resolve-cycle';
 import {
   getCurrentCycleSpendByCategory,
   getMonthOverMonthDiff,
@@ -132,28 +133,35 @@ export default async function DashboardPage({ searchParams }: Props) {
     );
   }
 
+  const today = new Date();
+
+  // When the household opted into auto-detect, the cycle anchors to the
+  // earliest linked income tx around the configured day rather than the
+  // configured day itself. Resolved once and threaded through allowance +
+  // chart so they stay in sync. Past cycles (cycleOffset != 0) keep the
+  // naive day for visual stability across the navigator.
+  const currentCycle = await resolveActiveBillingCycle(household, today);
+
   const allowance = await computeDailyAllowance(
     householdId,
     household.billingCycleStartDay,
+    today,
+    currentCycle,
   );
 
   const isStale =
     !oldestSync ||
     differenceInHours(new Date(), oldestSync) >= STALENESS_HOURS;
 
-  const today = new Date();
-
-  // The dashboard's allowance/math card always pins to the *current* cycle.
-  // The donut targets a navigable cycle (offset 0 is current, negative goes
-  // back through history). Trend/diff are intrinsically multi-month and
-  // ignore the offset.
   const isCurrentCycle = cycleOffset === 0;
   const chartCycle = isCurrentCycle
-    ? allowance.cycle
+    ? currentCycle
     : getActiveBillingCycle(
         household.billingCycleStartDay,
         subMonths(today, -cycleOffset),
       );
+
+  const immediateCards = household.immediateChargeCards;
 
   const [
     donutSlices,
@@ -162,14 +170,19 @@ export default async function DashboardPage({ searchParams }: Props) {
     txByCategory,
     categoriesForPicker,
   ] = await Promise.all([
-    getCurrentCycleSpendByCategory(householdId, chartCycle),
+    getCurrentCycleSpendByCategory(householdId, chartCycle, immediateCards),
     getMonthlyTrend(
       householdId,
       rangeToMonths(range),
       household.billingCycleStartDay,
     ),
-    getMonthOverMonthDiff(householdId, household.billingCycleStartDay, today),
-    getTransactionsByCategoryForCycle(householdId, chartCycle),
+    getMonthOverMonthDiff(
+      householdId,
+      household.billingCycleStartDay,
+      today,
+      immediateCards,
+    ),
+    getTransactionsByCategoryForCycle(householdId, chartCycle, immediateCards),
     listCategoriesForHousehold(),
   ]);
   const cycleRangeLabel = formatCycleRange(chartCycle);

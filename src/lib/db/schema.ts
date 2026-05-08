@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import {
   pgTable,
   text,
@@ -43,7 +44,28 @@ export const passwordResetTokens = pgTable('password_reset_tokens', {
 export const households = pgTable('households', {
   id: uuid('id').defaultRandom().primaryKey(),
   name: text('name').notNull(),
+  // Fallback / "expected" cycle start day. Used directly when
+  // autoDetectCycleStart is false; otherwise used as the anchor day around
+  // which we look for the actual landing date of the first income tx of
+  // the month.
   billingCycleStartDay: integer('billing_cycle_start_day').notNull().default(1),
+  // When true, the active cycle starts on the earliest linked income tx
+  // date that lands within ±10 days of billingCycleStartDay. This handles
+  // households where payday slides ±a few days month-to-month (holidays,
+  // weekend shifts) — the cycle follows the actual salary instead of
+  // splitting it across two cycles.
+  autoDetectCycleStart: boolean('auto_detect_cycle_start')
+    .notNull()
+    .default(false),
+  // List of card-last-four values that are immediate-charge (debit-style)
+  // cards — דיירקט and similar. The bank scraper still reports them under
+  // the CC issuer account, but their charge hits the bank account on the
+  // purchase date, not on the monthly bill date. Charts treat them as if
+  // their effective cycle date IS the purchase date.
+  immediateChargeCards: text('immediate_charge_cards')
+    .array()
+    .notNull()
+    .default(sql`'{}'::text[]`),
   currency: text('currency').notNull().default('ILS'),
   timezone: text('timezone').notNull().default('Asia/Jerusalem'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),

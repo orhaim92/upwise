@@ -1,0 +1,1 @@
+ALTER TABLE "households" ADD COLUMN "immediate_charge_cards" text[] DEFAULT '{}'::text[] NOT NULL;

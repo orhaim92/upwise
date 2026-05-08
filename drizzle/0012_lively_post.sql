@@ -1,0 +1,1 @@
+ALTER TABLE "households" ADD COLUMN "auto_detect_cycle_start" boolean DEFAULT false NOT NULL;

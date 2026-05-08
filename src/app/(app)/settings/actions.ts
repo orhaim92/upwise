@@ -21,7 +21,12 @@ export async function updateCycle(
 
   await db
     .update(households)
-    .set({ billingCycleStartDay: parsed.data.billingCycleStartDay })
+    .set({
+      billingCycleStartDay: parsed.data.billingCycleStartDay,
+      ...(parsed.data.autoDetectCycleStart !== undefined
+        ? { autoDetectCycleStart: parsed.data.autoDetectCycleStart }
+        : {}),
+    })
     .where(eq(households.id, householdId));
 
   revalidatePath('/dashboard');

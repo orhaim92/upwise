@@ -1,8 +1,9 @@
 /**
- * Prints why the most-recent income transaction did NOT link to its
- * recurring rule. Compares the tx's normalized description and amount to
- * each active income rule, byte-for-byte, and reports the first failed
- * predicate per rule.
+ * Two diagnostics:
+ *   1. Recent unlinked income txs vs every income rule (per-predicate)
+ *   2. Materialization status for every active+confirmed rule in the
+ *      currently-active cycle. The dashboard shows a rule under "expected
+ *      income" only when materialization returns isMaterialized=false.
  *
  * Run: npx tsx --tsconfig tsconfig.json src/scripts/diagnose-recurring-link.ts
  */
@@ -10,11 +11,15 @@ import { loadEnvConfig } from '@next/env';
 loadEnvConfig(process.cwd());
 
 async function main() {
-  // Dynamic imports so env is loaded before db/index.ts reads DATABASE_URL.
   const { db } = await import('@/lib/db');
-  const { recurringRules, transactions } = await import('@/lib/db/schema');
+  const { recurringRules, transactions, households } = await import(
+    '@/lib/db/schema'
+  );
   const { and, desc, eq, gt, isNull } = await import('drizzle-orm');
+  const { getActiveBillingCycle } = await import('@/lib/cycles/billing-cycle');
+  const { checkMaterialization } = await import('@/lib/cycles/materialization');
 
+  console.log('========== UNLINKED INCOME TXs (recent) ==========');
   const recent = await db
     .select()
     .from(transactions)
@@ -22,81 +27,84 @@ async function main() {
     .orderBy(desc(transactions.date))
     .limit(5);
 
-  if (recent.length === 0) {
-    console.log('No recent unlinked income transactions found.');
-    return;
-  }
-
   for (const tx of recent) {
     console.log('--- TX -------------------------------------------------');
-    console.log('id:', tx.id);
-    console.log('date:', tx.date, '/ processedDate:', tx.processedDate);
-    console.log('amount:', tx.amount);
-    console.log('description:', JSON.stringify(tx.description));
-    console.log('rawDescription:', JSON.stringify(tx.rawDescription));
+    console.log('id:', tx.id, 'date:', tx.date, 'amount:', tx.amount);
     console.log(
       'normalizedDescription:',
       JSON.stringify(tx.normalizedDescription),
     );
-    if (tx.normalizedDescription) {
-      console.log(
-        '  bytes:',
-        Array.from(tx.normalizedDescription)
-          .map((c) => c.charCodeAt(0).toString(16).padStart(4, '0'))
-          .join(' '),
-      );
-    }
+  }
+
+  console.log('\n========== MATERIALIZATION (current cycle) ==========');
+  // For each household: build current cycle, run checkMaterialization, print.
+  const hh = await db.select().from(households);
+  for (const h of hh) {
+    const cycle = getActiveBillingCycle(h.billingCycleStartDay);
+    console.log(`Household ${h.name} (${h.id})`);
+    console.log(`  cycleStartDay: ${h.billingCycleStartDay}`);
+    console.log(
+      `  cycle.startDate: ${cycle.startDate.toISOString()} (${cycle.startDate.toString()})`,
+    );
+    console.log(
+      `  cycle.endDate:   ${cycle.endDate.toISOString()} (${cycle.endDate.toString()})`,
+    );
+    console.log(
+      `  startStr (used in SQL): ${cycle.startDate.toISOString().slice(0, 10)}`,
+    );
+    console.log(
+      `  endStr   (used in SQL): ${cycle.endDate.toISOString().slice(0, 10)}`,
+    );
 
     const rules = await db
       .select()
       .from(recurringRules)
       .where(
         and(
-          eq(recurringRules.householdId, tx.householdId),
-          eq(recurringRules.type, 'income'),
+          eq(recurringRules.householdId, h.id),
+          eq(recurringRules.isActive, true),
+          eq(recurringRules.detectionStatus, 'confirmed'),
         ),
       );
 
+    const mat = await checkMaterialization(
+      h.id,
+      rules,
+      cycle.startDate,
+      cycle.endDate,
+    );
+
     for (const r of rules) {
-      console.log(`  RULE ${r.name} (${r.id})`);
-      console.log('    isActive:', r.isActive);
-      console.log('    detectionStatus:', r.detectionStatus);
-      console.log('    matchPattern:', JSON.stringify(r.matchPattern));
-      if (r.matchPattern) {
-        console.log(
-          '      bytes:',
-          Array.from(r.matchPattern)
-            .map((c) => c.charCodeAt(0).toString(16).padStart(4, '0'))
-            .join(' '),
-        );
-      }
+      const m = mat.get(r.id);
       console.log(
-        '    expected:',
-        r.expectedAmount,
-        'tolerance%:',
-        r.amountTolerancePct,
+        `  RULE ${r.name} (${r.type})  isMaterialized=${m?.isMaterialized}  reason=${m?.reason}  matched=${m?.matchedTransactionIds.join(',') || '-'}`,
       );
 
-      const expected = Number(r.expectedAmount);
-      const tol = Number(r.amountTolerancePct) / 100;
-      const min = expected * (1 - tol);
-      const max = expected * (1 + tol);
-      const amt = Math.abs(parseFloat(tx.amount));
-
-      const checks = {
-        active: r.isActive,
-        confirmed: r.detectionStatus === 'confirmed',
-        hasPattern: !!r.matchPattern,
-        normalizedSet: !!tx.normalizedDescription,
-        patternMatch:
-          !!r.matchPattern &&
-          tx.normalizedDescription === r.matchPattern,
-        amountInRange: amt >= min && amt <= max,
-        signCorrect: parseFloat(tx.amount) > 0, // income rule
-      };
-      console.log('    checks:', checks);
-      const allPass = Object.values(checks).every(Boolean);
-      console.log('    => WOULD LINK:', allPass);
+      // For unmaterialized: also show whether ANY tx exists with this
+      // rule's recurringRuleId (regardless of date), so we know if the
+      // window check or the FK is the issue.
+      if (!m?.isMaterialized) {
+        const any = await db
+          .select({
+            id: transactions.id,
+            date: transactions.date,
+            processedDate: transactions.processedDate,
+            amount: transactions.amount,
+          })
+          .from(transactions)
+          .where(eq(transactions.recurringRuleId, r.id))
+          .orderBy(desc(transactions.date))
+          .limit(3);
+        if (any.length === 0) {
+          console.log('    (no txs at all linked to this rule)');
+        } else {
+          for (const a of any) {
+            console.log(
+              `    linked tx: id=${a.id} date=${a.date} processedDate=${a.processedDate} amount=${a.amount}`,
+            );
+          }
+        }
+      }
     }
   }
   process.exit(0);
