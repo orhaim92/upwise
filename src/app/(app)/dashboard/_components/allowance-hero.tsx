@@ -65,7 +65,9 @@ export function AllowanceHero({ allowance, isStale }: Props) {
 
       <h2 className="text-sm font-medium text-slate-700 mt-4">{headline}</h2>
 
-      <div className={`text-6xl font-bold mt-2 tabular-nums ${numberClass}`}>
+      <div
+        className={`font-bold mt-2 tabular-nums leading-tight text-[clamp(2.25rem,11vw,3.75rem)] ${numberClass}`}
+      >
         <bdi>
           {isCycleEnded || isOverBudget
             ? formatILS(0)

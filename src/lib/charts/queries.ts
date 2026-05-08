@@ -118,12 +118,15 @@ export async function getTransactionsByCategoryForCycle(
   const startStr = format(cycle.startDate, 'yyyy-MM-dd');
   const endStr = format(cycle.endDate, 'yyyy-MM-dd');
 
+  // Display the effective date (what the filter buckets by), not the raw
+  // purchase date — otherwise CC line items show their April purchase date
+  // even though they only land in the May cycle when the bank pays the bill.
   const rows = await db
     .select({
       id: transactions.id,
       description: transactions.description,
       amount: transactions.amount,
-      date: transactions.date,
+      date: sql<string>`COALESCE(${transactions.processedDate}, ${transactions.date})`,
       categoryKey: categories.key,
     })
     .from(transactions)
@@ -140,7 +143,9 @@ export async function getTransactionsByCategoryForCycle(
         expenseRowFilter,
       ),
     )
-    .orderBy(desc(transactions.date));
+    .orderBy(
+      desc(sql`COALESCE(${transactions.processedDate}, ${transactions.date})`),
+    );
 
   const out: Record<string, CategoryTxStub[]> = {};
   for (const r of rows) {
