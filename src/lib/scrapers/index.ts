@@ -67,8 +67,72 @@ const PROVIDER_TO_COMPANY: Record<string, CompanyTypes> = {
   visaCal: CompanyTypes.visaCal,
 };
 
+// Retry config: bank WAFs and Puppeteer/CDP both produce transient
+// failures (timeouts, "Runtime.callFunctionOn timed out", connection
+// resets, etc.) that resolve on a fresh attempt minutes later. We retry
+// transient errors with growing backoff — but never auth failures, since
+// retrying a wrong password risks locking the account. Read from env so
+// CI can dial it down (or up) without a code change.
+const MAX_ATTEMPTS = Math.max(
+  1,
+  Math.min(5, Number(process.env.SCRAPE_MAX_ATTEMPTS) || 3),
+);
+// Backoff progression in ms — index = attempt number (0 = first attempt
+// has no preceding wait). Last entry is reused for any extra attempts.
+const BACKOFF_MS = [0, 8_000, 30_000, 90_000, 180_000];
+
+const RETRYABLE_ERROR_TYPES: readonly ScrapeErrorType[] = [
+  'TIMEOUT',
+  'GENERIC',
+];
+
+function isRetryable(errorType: ScrapeErrorType): boolean {
+  return RETRYABLE_ERROR_TYPES.includes(errorType);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 // THIS IS THE ONLY PLACE IN THE APP THAT CALLS decrypt().
 export async function scrapeAccount(params: {
+  provider: string;
+  encryptedCredentials: string;
+  startDate?: Date;
+}): Promise<ScrapeResult> {
+  let lastResult: ScrapeResult | null = null;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    if (attempt > 1) {
+      const wait = BACKOFF_MS[Math.min(attempt - 1, BACKOFF_MS.length - 1)];
+      if (process.env.NODE_ENV !== 'production') {
+        console.log(
+          `[scrape:${params.provider}] attempt ${attempt}/${MAX_ATTEMPTS} (waiting ${Math.round(wait / 1000)}s after transient failure: ${
+            lastResult && !lastResult.success
+              ? `${lastResult.errorType}: ${lastResult.errorMessage}`
+              : 'unknown'
+          })`,
+        );
+      }
+      await delay(wait);
+    }
+
+    const result = await scrapeAccountOnce(params);
+    if (result.success) return result;
+
+    lastResult = result;
+    if (!isRetryable(result.errorType)) return result;
+  }
+  // Exhausted retries — return the most recent failure.
+  return (
+    lastResult ?? {
+      success: false,
+      errorType: 'GENERIC',
+      errorMessage: 'All retries exhausted',
+    }
+  );
+}
+
+async function scrapeAccountOnce(params: {
   provider: string;
   encryptedCredentials: string;
   startDate?: Date;

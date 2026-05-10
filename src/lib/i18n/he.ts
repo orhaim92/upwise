@@ -279,6 +279,7 @@ export const t = {
     savingsCommitment: 'הפרשה לחיסכון',
     remainingForVariable: 'נותר לבזבוז משתנה',
     overBudget: 'חרגת מהתקציב ב-{amount}',
+    overdraftBadge: 'בעו"ש שלילי של {amount}',
     cycleEnded: 'המחזור הסתיים',
     currentBalance: 'יתרה נוכחית',
     expectedRemainingIncome: 'הכנסה צפויה עד סוף המחזור',

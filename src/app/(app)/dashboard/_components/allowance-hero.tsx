@@ -1,4 +1,4 @@
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, MinusCircle } from 'lucide-react';
 import { type DailyAllowance } from '@/lib/cycles/daily-allowance';
 import { formatCycleRange } from '@/lib/cycles/billing-cycle';
 import { formatILS, template } from '@/lib/format';
@@ -17,6 +17,8 @@ export function AllowanceHero({ allowance, isStale }: Props) {
     isCycleEnded,
     balanceAvailable,
     availableToSpend,
+    isOverdraft,
+    currentTotalBalance,
   } = allowance;
 
   if (!balanceAvailable) {
@@ -74,6 +76,21 @@ export function AllowanceHero({ allowance, isStale }: Props) {
             : formatILS(dailyAllowance)}
         </bdi>
       </div>
+
+      {/* Overdraft pill — shown only when bank balance is negative. The
+          daily allowance above is computed as a budget delta, so it can
+          look healthy even while the user is in the red. This pill keeps
+          that fact visible without crushing the headline. */}
+      {isOverdraft && (
+        <div className="mt-3 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-50 text-rose-700 text-xs font-medium ring-1 ring-rose-200">
+          <MinusCircle className="size-3.5" />
+          <span>
+            {template(t.allowance.overdraftBadge, {
+              amount: formatILS(Math.abs(currentTotalBalance)),
+            })}
+          </span>
+        </div>
+      )}
     </div>
   );
 }

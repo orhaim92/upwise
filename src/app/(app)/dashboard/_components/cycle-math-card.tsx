@@ -34,14 +34,19 @@ export function CycleMathCard({
         </div>
       )}
 
+      {/* Cash-flow / budget model. Walks: cycle income → minus everything
+          committed (recurring, manual, savings) and already-spent → equals
+          discretionary slack remaining. The headline figure is independent
+          of debt; current balance is shown separately so an overdraft is
+          still visible without crushing the daily allowance. */}
       <div className="space-y-0">
         <BreakdownRow
-          label={t.allowance.currentBalance}
-          totalAmount={allowance.currentTotalBalance}
-          items={allowance.balanceBreakdown}
-          bold
+          label={t.allowance.incomeRealizedToDate}
+          totalAmount={allowance.incomeRealizedToDate}
+          items={allowance.realizedIncomeBreakdown}
+          signed="+"
+          positive
         />
-
         <BreakdownRow
           label={t.allowance.expectedRemainingIncome}
           totalAmount={allowance.expectedRemainingIncome}
@@ -49,7 +54,6 @@ export function CycleMathCard({
           signed="+"
           positive
         />
-
         <BreakdownRow
           label={t.allowance.manualIncome}
           totalAmount={allowance.manualOneTimeIncome}
@@ -63,12 +67,17 @@ export function CycleMathCard({
         </div>
 
         <BreakdownRow
+          label={t.allowance.expensesRealizedToDate}
+          totalAmount={allowance.expensesRealizedToDate}
+          items={allowance.realizedExpensesBreakdown}
+          signed="-"
+        />
+        <BreakdownRow
           label={t.allowance.expectedRemainingRecurring}
           totalAmount={allowance.expectedRemainingRecurringExpenses}
           items={allowance.expectedRemainingRecurringExpensesBreakdown}
           signed="-"
         />
-
         <BreakdownRow
           label={t.allowance.manualExpenses}
           totalAmount={allowance.manualOneTimeExpenses}
@@ -103,21 +112,14 @@ export function CycleMathCard({
 
       <details className="mt-4 text-sm">
         <summary className="cursor-pointer text-slate-500 hover:text-slate-700">
-          {t.allowance.cycleSoFar}
+          {t.allowance.currentBalance}
         </summary>
         <div className="mt-2">
           <BreakdownRow
-            label={t.allowance.incomeRealizedToDate}
-            totalAmount={allowance.incomeRealizedToDate}
-            items={allowance.realizedIncomeBreakdown}
-            signed="+"
-            positive
-          />
-          <BreakdownRow
-            label={t.allowance.expensesRealizedToDate}
-            totalAmount={allowance.expensesRealizedToDate}
-            items={allowance.realizedExpensesBreakdown}
-            signed="-"
+            label={t.allowance.currentBalance}
+            totalAmount={allowance.currentTotalBalance}
+            items={allowance.balanceBreakdown}
+            bold
           />
         </div>
       </details>

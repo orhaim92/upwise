@@ -59,6 +59,11 @@ export type DailyAllowance = {
   isOverBudget: boolean;
   isCycleEnded: boolean;
   isLowBalance: boolean;
+  // True when bank balance is currently negative. Surfaced as a separate
+  // overdraft indicator so the headline daily allowance (which uses a
+  // cash-flow / budget model independent of debt) doesn't mask the fact
+  // that there's a debt to be aware of.
+  isOverdraft: boolean;
 };
 
 const LOW_BALANCE_FLOOR = 500;
@@ -290,10 +295,24 @@ export async function computeDailyAllowance(
     0,
   );
 
+  // Budget / cash-flow model (independent of historical debt):
+  //
+  //   cycleBudget       = totalCycleIncome - savings - manual expenses
+  //                       - expected remaining recurring expenses
+  //   availableToSpend  = cycleBudget - already-realized expenses this cycle
+  //
+  // For a household in overdraft, the previous "currentBalance + ..."
+  // formula tried to pay off the entire debt every cycle — daily allowance
+  // would crater even though the user is on track. The delta-based model
+  // says "how much more can you spend this cycle and still hit your
+  // savings goal." Existing overdraft is surfaced via `isOverdraft` so the
+  // user keeps situational awareness.
+  const totalCycleIncome =
+    incomeRealizedToDate + expectedRemainingIncome + manualOneTimeIncome;
+
   const availableToSpend =
-    currentTotalBalance +
-    expectedRemainingIncome +
-    manualOneTimeIncome -
+    totalCycleIncome -
+    expensesRealizedToDate -
     expectedRemainingRecurringExpenses -
     manualOneTimeExpenses -
     savingsCommitmentRemainingInCycle;
@@ -327,5 +346,6 @@ export async function computeDailyAllowance(
     isOverBudget: availableToSpend < 0,
     isCycleEnded: cycle.daysRemaining === 0,
     isLowBalance: availableToSpend >= 0 && availableToSpend < LOW_BALANCE_FLOOR,
+    isOverdraft: balanceAvailable && currentTotalBalance < 0,
   };
 }
