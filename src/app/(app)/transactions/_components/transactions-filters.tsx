@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
-import { Search, X, ChevronDown, Check } from 'lucide-react';
+import { Search, X, ChevronDown, ChevronUp, Check, SlidersHorizontal } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import {
@@ -52,6 +52,30 @@ export function TransactionsFilters({
   const pathname = usePathname();
   const params = useSearchParams();
   const [search, setSearch] = useState(params.get('search') ?? '');
+  // Collapse the filter body by default. Re-hydrate the user's last
+  // choice from localStorage so navigating away and back doesn't reset.
+  // SSR renders collapsed; client useEffect restores expanded if stored.
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem('upwise.filters.expanded') === '1') {
+        setExpanded(true);
+      }
+    } catch {
+      // localStorage may be unavailable (private mode, SSR) — ignore.
+    }
+  }, []);
+  function toggleExpanded() {
+    setExpanded((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('upwise.filters.expanded', next ? '1' : '0');
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }
 
   // Initialize Hebrew labels at runtime so this static map stays consumable.
   TYPE_LABELS.all = t.transactions.filterTypeAll;
@@ -182,8 +206,48 @@ export function TransactionsFilters({
     },
   ];
 
+  // Visible filter count for the collapsed header — search/cycle/account/
+  // category/type/dates/showSpecial. Used purely as a hint so the user
+  // knows there's something hiding under the chevron.
+  const activeCount =
+    (search ? 1 : 0) +
+    (params.get('cycle') ? 1 : 0) +
+    (selectedIds.length > 0 ? 1 : 0) +
+    (selectedCategoryKeys.length > 0 ? 1 : 0) +
+    (currentType !== 'all' ? 1 : 0) +
+    (params.get('startDate') ? 1 : 0) +
+    (params.get('endDate') ? 1 : 0) +
+    (params.get('showSpecial') === '1' ? 1 : 0);
+
   return (
-    <div className="bg-white rounded-2xl ring-1 ring-slate-200 p-4 space-y-3">
+    <div className="bg-white rounded-2xl ring-1 ring-slate-200">
+      {/* Always-visible header — clicking toggles the body. Shows count of
+          active filters so the user can tell at a glance whether anything
+          is filtering the current view. */}
+      <button
+        type="button"
+        onClick={toggleExpanded}
+        className="w-full flex items-center justify-between gap-2 p-3 text-start"
+        aria-expanded={expanded}
+      >
+        <span className="flex items-center gap-2 text-sm font-medium text-slate-700">
+          <SlidersHorizontal className="size-4" />
+          {t.transactions.filtersTitle}
+          {activeCount > 0 && (
+            <span className="inline-flex items-center justify-center size-5 rounded-full bg-violet-100 text-violet-700 text-xs font-semibold">
+              {activeCount}
+            </span>
+          )}
+        </span>
+        {expanded ? (
+          <ChevronUp className="size-4 text-slate-400" />
+        ) : (
+          <ChevronDown className="size-4 text-slate-400" />
+        )}
+      </button>
+
+      {expanded && (
+        <div className="border-t border-slate-100 p-4 space-y-3">
       {/* Cycle quick-pick — sits first so it's visible at a glance. Selecting
           a cycle clears any manual startDate/endDate, since the cycle bounds
           take precedence on the server side. */}
@@ -449,6 +513,8 @@ export function TransactionsFilters({
         />
         {t.transactions.showSpecial}
       </label>
+        </div>
+      )}
     </div>
   );
 }

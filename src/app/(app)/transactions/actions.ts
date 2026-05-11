@@ -304,7 +304,15 @@ export async function unmarkAsCardStatement(
 
   await db
     .update(transactions)
-    .set({ isAggregatedCharge: false, isUserModified: true })
+    .set({
+      isAggregatedCharge: false,
+      // Clear the card link too — without this the row still claims to
+      // belong to a card on the dashboard math (immediate-charge logic
+      // and chart filters both read cardLastFour). isUserModified=true
+      // keeps the post-sync detector from auto-relinking on next sync.
+      cardLastFour: null,
+      isUserModified: true,
+    })
     .where(eq(transactions.id, transactionId));
 
   revalidatePath('/transactions');

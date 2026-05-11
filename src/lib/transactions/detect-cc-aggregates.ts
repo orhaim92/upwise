@@ -57,13 +57,19 @@ export async function detectCreditCardAggregates(
     sql`, `,
   );
 
-  // Pull every candidate bank tx in one query
+  // Pull every candidate bank tx in one query.
+  // Include description so we can do the strongest detection — when the
+  // bank itself wrote the card last-4 into the row (e.g. "5385 - אמריקן
+  // אקספרס"), match by that before anything else. Description match is
+  // unambiguous and cheap; sum / 1:1 fallbacks below handle the silent
+  // bank descriptions like "חיוב כרטיס: מזרחי".
   const candidatesRaw = await db.execute<{
     id: string;
     date: string;
     amount: string;
+    description: string;
   }>(sql`
-    SELECT id, date::text, amount::text
+    SELECT id, date::text, amount::text, description
     FROM transactions
     WHERE household_id = ${householdId}
       AND account_id IN (${bankInList})
@@ -75,19 +81,47 @@ export async function detectCreditCardAggregates(
       AND abs(amount) >= ${MIN_AGGREGATE_AMOUNT}
   `);
 
-  const candidates: Array<{ id: string; date: string; amount: string }> =
+  const candidates: Array<{
+    id: string;
+    date: string;
+    amount: string;
+    description: string;
+  }> =
     (candidatesRaw as unknown as {
-      rows?: Array<{ id: string; date: string; amount: string }>;
+      rows?: Array<{
+        id: string;
+        date: string;
+        amount: string;
+        description: string;
+      }>;
     })?.rows ??
     (candidatesRaw as unknown as Array<{
       id: string;
       date: string;
       amount: string;
+      description: string;
     }>);
+
+  // Lookup table of known card last-4 → (accountId, last4). Used by the
+  // description-match path. Built once so we don't query per-candidate.
+  const cardByLast4 = new Map<
+    string,
+    { accountId: string; cardLastFour: string }
+  >();
+  for (const c of cards) {
+    if (c.cardLastFour) {
+      cardByLast4.set(c.cardLastFour, {
+        accountId: c.accountId,
+        cardLastFour: c.cardLastFour,
+      });
+    }
+  }
 
   let marked = 0;
   let skippedAmbiguous = 0;
   let skippedNoMatch = 0;
+
+  let markedByDescription = 0;
 
   for (const cand of candidates) {
     const bankAmount = Math.abs(parseFloat(cand.amount));
@@ -95,6 +129,31 @@ export async function detectCreditCardAggregates(
     const windowStart = format(subDays(candDate, WINDOW_DAYS), 'yyyy-MM-dd');
     const windowEnd = format(addDays(candDate, WINDOW_DAYS), 'yyyy-MM-dd');
     const tolerance = bankAmount * SUM_TOLERANCE;
+
+    // Path 0 — description carries the card last-4 (strongest signal).
+    // Banks like Otsar HaHayal write the card number directly, e.g.
+    // "5385 - אמריקן אקספרס". Extract every 4-digit run and look for
+    // exactly one that matches a known card; if so, link immediately and
+    // skip the sum / exact-amount paths.
+    const fourDigitMatches = cand.description?.match(/\b\d{4}\b/g) ?? [];
+    const recognized = Array.from(
+      new Set(
+        fourDigitMatches.filter((d) => cardByLast4.has(d)),
+      ),
+    );
+    if (recognized.length === 1) {
+      const card = cardByLast4.get(recognized[0])!;
+      await db
+        .update(transactions)
+        .set({
+          isAggregatedCharge: true,
+          cardLastFour: card.cardLastFour,
+        })
+        .where(eq(transactions.id, cand.id));
+      marked++;
+      markedByDescription++;
+      continue;
+    }
 
     const matchingCards: Array<{ accountId: string; cardLastFour: string }> = [];
 
@@ -196,7 +255,7 @@ export async function detectCreditCardAggregates(
 
   if (process.env.NODE_ENV !== 'production') {
     console.log(
-      `[cc-aggregates] candidates=${candidates.length} marked=${marked} skippedAmbiguous=${skippedAmbiguous} skippedNoMatch=${skippedNoMatch}`,
+      `[cc-aggregates] candidates=${candidates.length} marked=${marked} (byDescription=${markedByDescription}) skippedAmbiguous=${skippedAmbiguous} skippedNoMatch=${skippedNoMatch}`,
     );
   }
 

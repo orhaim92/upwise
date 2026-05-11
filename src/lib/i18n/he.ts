@@ -116,6 +116,7 @@ export const t = {
     filterDateFrom: 'מתאריך',
     filterDateTo: 'עד תאריך',
     filterClear: 'נקה סינון',
+    filtersTitle: 'סינון',
     filterCycle: 'מחזור',
     filterCycleAll: 'כל התנועות',
     filterCycleCurrent: 'מחזור נוכחי',
