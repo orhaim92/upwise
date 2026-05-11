@@ -1,15 +1,24 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   AlertTriangle,
   ChevronDown,
   ChevronUp,
   CreditCard,
   Loader2,
+  MoreHorizontal,
+  Unlink,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { formatDate, formatILS, template } from '@/lib/format';
 import { t } from '@/lib/i18n/he';
 import type {
@@ -17,7 +26,7 @@ import type {
   TransactionRow,
   TransactionRowGrouped,
 } from '../queries';
-import { loadMoreTransactions } from '../actions';
+import { loadMoreTransactions, unmarkAsCardStatement } from '../actions';
 import { TransactionRowCard } from './transaction-row-card';
 
 type Category = {
@@ -170,7 +179,9 @@ function AggregateRow({
     categoryIcon: string | null,
   ) => void;
 }) {
+  const router = useRouter();
   const [expanded, setExpanded] = useState(false);
+  const [pending, startTransition] = useTransition();
   const parentAmount = Math.abs(parseFloat(tx.amount));
   const childrenCount = tx.children?.length ?? 0;
   const childrenSum = tx.childrenSum ?? 0;
@@ -178,6 +189,18 @@ function AggregateRow({
     childrenCount > 0 &&
     parentAmount > 0 &&
     Math.abs(childrenSum - parentAmount) / parentAmount > 0.05;
+
+  function handleUnmark() {
+    startTransition(async () => {
+      const r = await unmarkAsCardStatement(tx.id);
+      if (!r.ok) {
+        toast.error(r.error ?? t.common.error);
+        return;
+      }
+      toast.success(t.transactions.cardStatementUnmarked);
+      router.refresh();
+    });
+  }
 
   return (
     <li>
@@ -236,6 +259,34 @@ function AggregateRow({
 
         <div className="text-slate-900 font-semibold tabular-nums shrink-0 text-end min-w-[6.5rem]">
           <bdi>{formatILS(parseFloat(tx.amount))}</bdi>
+        </div>
+
+        {/* Aggregate-row actions menu. Without this the only way to undo a
+            wrong link was to dig into the DB — the standard row card's
+            menu doesn't render here because aggregate rows use a custom
+            shell. Stop click propagation so opening the menu doesn't also
+            toggle the children-expand. */}
+        <div onClick={(e) => e.stopPropagation()}>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label={t.common.more}
+                  disabled={pending}
+                />
+              }
+            >
+              <MoreHorizontal className="size-4" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={handleUnmark}>
+                <Unlink className="size-4 me-2" />
+                {t.transactions.unmarkCardStatement}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
