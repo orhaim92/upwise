@@ -1,4 +1,5 @@
 import { and, eq, ne, sql } from 'drizzle-orm';
+import { addDays, format, subDays } from 'date-fns';
 import { db } from '@/lib/db';
 import { transactions } from '@/lib/db/schema';
 
@@ -75,6 +76,14 @@ export async function consolidateCcPlaceholders(
     const minAmount = phAmount - tolerance;
     const maxAmount = phAmount + tolerance;
 
+    // Compute the date window in JS so we bind concrete yyyy-MM-dd strings
+    // — Postgres parameter inference was reading `date - $integer` as
+    // `date - date` (returns int), which broke the comparison with
+    // transactions.date.
+    const phDate = new Date(ph.date);
+    const minDate = format(subDays(phDate, DATE_WINDOW_DAYS), 'yyyy-MM-dd');
+    const maxDate = format(addDays(phDate, DATE_WINDOW_DAYS), 'yyyy-MM-dd');
+
     // The real twin is on the SAME account (Mizrahi reports both placeholder
     // and clearing under the bank account, not the CC account), within the
     // date window, with an amount close to the placeholder, and a
@@ -88,8 +97,8 @@ export async function consolidateCcPlaceholders(
           eq(transactions.accountId, ph.accountId),
           ne(transactions.id, ph.id),
           sql`${transactions.amount} BETWEEN ${minAmount.toFixed(2)} AND ${maxAmount.toFixed(2)}`,
-          sql`${transactions.date} >= (${ph.date}::date - ${DATE_WINDOW_DAYS})`,
-          sql`${transactions.date} <= (${ph.date}::date + ${DATE_WINDOW_DAYS})`,
+          sql`${transactions.date} >= ${minDate}`,
+          sql`${transactions.date} <= ${maxDate}`,
           sql`NOT (${placeholderWhere})`,
         ),
       );
