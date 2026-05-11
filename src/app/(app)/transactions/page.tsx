@@ -63,7 +63,13 @@ export default async function TransactionsPage({ searchParams }: Props) {
           target,
         );
         cycleStart = format(cycle.startDate, 'yyyy-MM-dd');
-        cycleEnd = format(cycle.endDate, 'yyyy-MM-dd');
+        // Current cycle: cap at today so future-dated rows (installment
+        // schedules, post-dated debits) don't appear in "what happened
+        // this cycle." Past cycles use the real cycle end.
+        const today = new Date();
+        const effectiveEnd =
+          offset === 0 && today < cycle.endDate ? today : cycle.endDate;
+        cycleEnd = format(effectiveEnd, 'yyyy-MM-dd');
         activeCycleOffset = offset;
       }
     }
