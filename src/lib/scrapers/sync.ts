@@ -18,6 +18,7 @@ import { detectCreditCardAggregates } from '@/lib/transactions/detect-cc-aggrega
 import { autoCategorizeTransactions } from '@/lib/transactions/auto-categorize';
 import { applyUserLearnedCategories } from '@/lib/transactions/learned-categorize';
 import { consolidateCrossDayDuplicates } from '@/lib/transactions/consolidate-cross-day-duplicates';
+import { consolidateCcPlaceholders } from '@/lib/transactions/consolidate-cc-placeholders';
 import { computeDailyAllowance } from '@/lib/cycles/daily-allowance';
 import { sendPushToHousehold } from '@/lib/pwa/push-server';
 import { formatILS } from '@/lib/format';
@@ -185,6 +186,7 @@ export async function syncAccount(
     detectInternalTransfers(householdId),
     (async () => {
       await consolidateCrossDayDuplicates(householdId);
+      await consolidateCcPlaceholders(householdId);
       await applyUserLearnedCategories(householdId);
       await autoCategorizeTransactions(householdId);
     })(),
@@ -241,8 +243,11 @@ export async function syncAllAccounts(
   // Order matters:
   // 1. Mark internal transfers first (they should never be auto-categorized as expenses)
   // 2. Identify CC aggregated charges (cross-account; only run on full sync)
-  // 3. Consolidate cross-day duplicate rows (date drift across syncs) before
-  //    we waste effort categorizing rows we're about to delete
+  // 3a. Consolidate cross-day duplicate rows (date drift across syncs) before
+  //     we waste effort categorizing rows we're about to delete
+  // 3b. Consolidate CC placeholder/cleared pairs (Mizrahi-style stale
+  //     "חיוב/זיכוי כרטיס אשראי" rows). Runs after cross-day so an already-
+  //     deduped pair doesn't get reconsidered.
   // 4a. Apply user-learned categories — per-household choices for descriptions
   //     the user has already categorized before
   // 4b. Auto-categorize remaining uncategorized rows via generic keyword rules
@@ -252,6 +257,7 @@ export async function syncAllAccounts(
     await detectInternalTransfers(householdId);
     await detectCreditCardAggregates(householdId);
     await consolidateCrossDayDuplicates(householdId);
+    await consolidateCcPlaceholders(householdId);
     await applyUserLearnedCategories(householdId);
     await autoCategorizeTransactions(householdId);
     const patterns = await detectRecurringPatterns(householdId);
