@@ -23,6 +23,13 @@ export async function householdNeedsSync(
   });
 }
 
+// Returns the most-recent successful sync timestamp across the household's
+// active accounts. The dashboard banner uses this to decide whether to warn
+// the user that data may be stale — by surfacing the *newest* sync, the
+// banner only triggers when EVERY account is overdue. A single stale CC
+// while the bank synced an hour ago no longer flips the whole dashboard
+// red. Returns null when the household has no active accounts so the
+// caller can branch on "fresh install" vs "all stale".
 export async function householdOldestSync(
   householdId: string,
 ): Promise<Date | null> {
@@ -34,11 +41,11 @@ export async function householdOldestSync(
     );
 
   if (accs.length === 0) return null;
-  if (accs.some((a) => !a.lastScrapedAt)) return null;
 
-  let oldest: Date = accs[0].lastScrapedAt!;
+  let newest: Date | null = null;
   for (const a of accs) {
-    if (a.lastScrapedAt! < oldest) oldest = a.lastScrapedAt!;
+    if (!a.lastScrapedAt) continue;
+    if (!newest || a.lastScrapedAt > newest) newest = a.lastScrapedAt;
   }
-  return oldest;
+  return newest;
 }
