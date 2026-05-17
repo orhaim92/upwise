@@ -56,9 +56,29 @@ export type AccountSyncResult = {
   status: 'success' | 'error';
   scraped: number;
   inserted: number;
+  // Count of stale debit-aggregate rows deleted and re-pulled from the
+  // bank's current truth this sync (see DEBIT_AGGREGATE_PATTERNS below).
+  staleRefreshed: number;
   errorType?: string;
   errorMessage?: string;
 };
+
+// Bank descriptions for immediate-charge / דיירקט debit aggregates.
+// These rows are running same-day totals whose amount changes between
+// syncs; since our dedup key hashes amount in, each snapshot lands as a
+// distinct row and stale snapshots accumulate. The bank itself drops the
+// stale ones — so on every successful bank scrape we delete rows matching
+// these patterns in the scraped window and let the insert loop re-create
+// them from the fresh scrape.
+//
+// "ירקט" is the common substring of both spellings (דיירקט / דירקט);
+// "חיוב מידי" / "חיוב מיידי" cover the spelling variants of the
+// immediate-charge CC purchases label.
+const DEBIT_AGGREGATE_PATTERNS = [
+  '%ירקט%',
+  '%חיוב מידי%',
+  '%חיוב מיידי%',
+];
 
 export async function syncAccount(
   accountId: string,
@@ -77,6 +97,7 @@ export async function syncAccount(
       status: 'error',
       scraped: 0,
       inserted: 0,
+      staleRefreshed: 0,
       errorType: 'NOT_FOUND',
       errorMessage: 'Account not found',
     };
@@ -106,9 +127,44 @@ export async function syncAccount(
       status: 'error',
       scraped: 0,
       inserted: 0,
+      staleRefreshed: 0,
       errorType: scrape.errorType,
       errorMessage: scrape.errorMessage,
     };
+  }
+
+  // Wipe-and-refresh stale debit aggregates (bank accounts only). The
+  // bank consolidates these rows and drops stale snapshots; our
+  // amount-keyed dedup keeps every snapshot, so we delete the matching
+  // rows in the scraped window and let the insert loop below re-create
+  // them from the scrape's current values. Scoped tightly: only this
+  // account, only the debit-aggregate descriptions, only dates the
+  // scrape actually covered — so salary / mortgage / history are safe.
+  let staleRefreshed = 0;
+  if (account.type === 'bank' && scrape.transactions.length > 0) {
+    let earliest = scrape.transactions[0].date;
+    for (const tx of scrape.transactions) {
+      if (tx.date < earliest) earliest = tx.date;
+    }
+    const earliestStr = dateString(earliest);
+    const debitWhere = sql.join(
+      DEBIT_AGGREGATE_PATTERNS.map(
+        (p) => sql`${transactions.description} ILIKE ${p}`,
+      ),
+      sql` OR `,
+    );
+    const removed = await db
+      .delete(transactions)
+      .where(
+        and(
+          eq(transactions.accountId, accountId),
+          eq(transactions.householdId, householdId),
+          sql`${transactions.date} >= ${earliestStr}`,
+          sql`(${debitWhere})`,
+        ),
+      )
+      .returning({ id: transactions.id });
+    staleRefreshed = removed.length;
   }
 
   let inserted = 0;
@@ -170,7 +226,7 @@ export async function syncAccount(
 
   if (process.env.NODE_ENV !== 'production') {
     console.log(
-      `[sync:${account.provider}/${account.displayName}] scraped=${scrape.transactions.length} inserted=${inserted} balance=${scrape.currentBalance ?? 'n/a'}`,
+      `[sync:${account.provider}/${account.displayName}] scraped=${scrape.transactions.length} inserted=${inserted} staleRefreshed=${staleRefreshed} balance=${scrape.currentBalance ?? 'n/a'}`,
     );
   }
 
@@ -199,6 +255,7 @@ export async function syncAccount(
     status: 'success',
     scraped: scrape.transactions.length,
     inserted,
+    staleRefreshed,
   };
 }
 
@@ -308,14 +365,22 @@ export async function syncAllAccounts(
   // Skip noisy zero-change syncs.
   try {
     const totalInserted = results.reduce((s, r) => s + r.inserted, 0);
+    const totalRefreshed = results.reduce(
+      (s, r) => s + r.staleRefreshed,
+      0,
+    );
     const errCount = results.filter((r) => r.status === 'error').length;
-    if (totalInserted > 0 || errCount > 0) {
+    if (totalInserted > 0 || errCount > 0 || totalRefreshed > 0) {
+      const parts = [`נוספו ${totalInserted} תנועות.`];
+      if (totalRefreshed > 0) {
+        // Tell the user some debit rows were re-pulled from the bank's
+        // current state — data may have shifted vs the prior sync.
+        parts.push(`רועננו ${totalRefreshed} שורות חיוב מיידי מהבנק.`);
+      }
+      if (errCount > 0) parts.push(`${errCount} חשבונות נכשלו.`);
       await sendPushToHousehold(householdId, 'syncCompletionEnabled', {
         title: 'סנכרון הסתיים',
-        body:
-          errCount > 0
-            ? `נוספו ${totalInserted} תנועות. ${errCount} חשבונות נכשלו.`
-            : `נוספו ${totalInserted} תנועות.`,
+        body: parts.join(' '),
         url: '/transactions',
         tag: 'sync-complete',
       });
