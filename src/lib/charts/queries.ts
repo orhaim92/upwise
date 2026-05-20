@@ -506,7 +506,11 @@ export async function getMonthlyTrend(
         eq(transactions.householdId, householdId),
         sql`COALESCE(${transactions.processedDate}, ${transactions.date}) >= ${historyWindow}`,
         eq(transactions.isInternalTransfer, false),
-        eq(transactions.isAggregatedCharge, false),
+        // Aggregates are INCLUDED on purpose: when the trend chart sums
+        // bank-side cash flow, the bank-side CC bill aggregate IS the
+        // real cash outflow for that cycle. Excluding it would understate
+        // expenses by exactly the monthly CC bill amount and stop the
+        // trend from matching the cycle summary.
       ),
     );
 
@@ -545,10 +549,18 @@ export async function getMonthlyTrend(
   // The donut/diff still use the purchase-activity view (CC line items +
   // bank-paid whitelist) because they need per-category granularity, which
   // bank aggregates don't carry.
+  // Cap the current cycle at today so future-dated installments (already
+  // present in the DB but not yet realized) don't inflate the current
+  // bar. Past cycles use their full data — by definition all of those
+  // days have passed.
+  const todayMidnight = new Date(today);
+  todayMidnight.setHours(23, 59, 59, 999);
+
   for (const r of rows) {
     const txDate = new Date(r.effectiveDate);
     if (txDate < earliestCycle.startDate) continue; // history-only row, used for median calc
     if (r.accountType !== 'bank') continue; // CC line items excluded — see comment above.
+    if (txDate > todayMidnight) continue; // future-dated rows: skip until they actually happen.
 
     let cycle = getActiveBillingCycle(cycleStartDay, txDate);
 
