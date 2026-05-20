@@ -533,13 +533,22 @@ export async function getMonthlyTrend(
     incomeRuleMedianDay.set(ruleId, median);
   }
 
-  const bankOnly = new Set<string>(BANK_ONLY_EXPENSE_CATEGORIES);
   // key = cycle start yyyy-MM-dd
   const buckets = new Map<string, { income: number; expense: number }>();
 
+  // Bank-side cash flow per cycle — matches the cycle summary on the
+  // dashboard (incomeRealizedToDate / expensesRealizedToDate) so the two
+  // views always agree. CC line items are NOT counted directly here; the
+  // bank-side aggregate that pays the CC bill represents the actual cash
+  // outflow and that's what shows in this trend.
+  //
+  // The donut/diff still use the purchase-activity view (CC line items +
+  // bank-paid whitelist) because they need per-category granularity, which
+  // bank aggregates don't carry.
   for (const r of rows) {
     const txDate = new Date(r.effectiveDate);
     if (txDate < earliestCycle.startDate) continue; // history-only row, used for median calc
+    if (r.accountType !== 'bank') continue; // CC line items excluded — see comment above.
 
     let cycle = getActiveBillingCycle(cycleStartDay, txDate);
 
@@ -570,18 +579,8 @@ export async function getMonthlyTrend(
       buckets.set(key, bucket);
     }
     const amt = parseFloat(r.amount);
-    if (amt > 0 && r.accountType === 'bank') {
-      bucket.income += amt;
-    } else if (amt < 0) {
-      const isCC = r.accountType === 'credit_card';
-      const isBankPaid =
-        r.accountType === 'bank' &&
-        r.categoryKey !== null &&
-        bankOnly.has(r.categoryKey);
-      if (isCC || isBankPaid) {
-        bucket.expense += -amt;
-      }
-    }
+    if (amt > 0) bucket.income += amt;
+    else if (amt < 0) bucket.expense += -amt;
   }
 
   // Build a complete series for each of the N cycles (oldest → newest),
