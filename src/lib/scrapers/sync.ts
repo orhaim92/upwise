@@ -212,7 +212,12 @@ export async function syncAccount(
       scrapeStatus: 'success',
       scrapeError: null,
       lastScrapedAt: new Date(),
-      ...(scrape.currentBalance !== null
+      // Only persist a finite balance. Number.isFinite rejects NaN/Infinity
+      // as well as null, so a transient parse failure (which surfaces as NaN
+      // from the scraper) is skipped — the column keeps its last good value
+      // instead of being overwritten with "NaN".
+      ...(scrape.currentBalance !== null &&
+      Number.isFinite(scrape.currentBalance)
         ? {
             currentBalance: scrape.currentBalance.toFixed(2),
             balanceUpdatedAt: new Date(),

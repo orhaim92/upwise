@@ -275,8 +275,14 @@ async function scrapeAccountOnce(params: {
       const mask = maskAccountNumber(account.accountNumber);
       const last4 = extractLastFour(account.accountNumber);
       const accountWithBalance = account as unknown as { balance?: number };
-      if (typeof accountWithBalance.balance === 'number') {
-        currentBalance = (currentBalance ?? 0) + accountWithBalance.balance;
+      // Number.isFinite (not typeof === 'number') because `typeof NaN` is
+      // 'number': when the scraper fails to parse a sub-account's balance it
+      // hands back NaN, and adding that poisons the whole total. Skip it so a
+      // transient parse failure leaves the last known good balance untouched
+      // rather than overwriting it with NaN.
+      if (Number.isFinite(accountWithBalance.balance)) {
+        currentBalance =
+          (currentBalance ?? 0) + (accountWithBalance.balance as number);
       }
       const rawTxs = (account.txns ?? []) as unknown as RawTx[];
       let kept = 0;
