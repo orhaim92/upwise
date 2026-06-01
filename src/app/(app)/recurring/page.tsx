@@ -1,4 +1,5 @@
 import { listRules } from './actions';
+import { getNextCycleSkippedRuleIds } from './skip-actions';
 import { listCategoriesForHousehold } from '../transactions/actions';
 import { AddRuleDialog } from './_components/add-rule-dialog';
 import { PendingSuggestions } from './_components/pending-suggestions';
@@ -6,9 +7,10 @@ import { RulesList } from './_components/rules-list';
 import { t } from '@/lib/i18n/he';
 
 export default async function RecurringPage() {
-  const [rules, categories] = await Promise.all([
+  const [rules, categories, skippedNextCycle] = await Promise.all([
     listRules(),
     listCategoriesForHousehold(),
+    getNextCycleSkippedRuleIds(),
   ]);
   const pending = rules.filter((r) => r.detectionStatus === 'pending');
   const confirmed = rules.filter((r) => r.detectionStatus === 'confirmed');
@@ -25,7 +27,11 @@ export default async function RecurringPage() {
 
       {pending.length > 0 && <PendingSuggestions rules={pending} />}
 
-      <RulesList rules={confirmed} categories={categories} />
+      <RulesList
+        rules={confirmed}
+        categories={categories}
+        skippedNextCycle={skippedNextCycle}
+      />
     </div>
   );
 }

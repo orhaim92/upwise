@@ -1,10 +1,11 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { Pencil, Trash2 } from 'lucide-react';
+import { CalendarX, Pencil, RotateCcw, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { deleteRule } from '../actions';
+import { skipRuleForCycle, unskipRuleForCycle } from '../skip-actions';
 import { formatILS } from '@/lib/format';
 import { t } from '@/lib/i18n/he';
 import { EditRuleDialog } from './edit-rule-dialog';
@@ -41,9 +42,11 @@ type Category = {
 export function RuleRow({
   rule,
   categories,
+  skippedNextCycle = false,
 }: {
   rule: Rule;
   categories: Category[];
+  skippedNextCycle?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [pending, startTransition] = useTransition();
@@ -54,6 +57,21 @@ export function RuleRow({
       const result = await deleteRule(rule.id);
       if (!result.ok) toast.error(result.error);
       else toast.success(t.recurring.ruleDeleted);
+    });
+  }
+
+  function handleToggleNextCycleSkip() {
+    startTransition(async () => {
+      const r = skippedNextCycle
+        ? await unskipRuleForCycle({ ruleId: rule.id, cycleOffset: 1 })
+        : await skipRuleForCycle({ ruleId: rule.id, cycleOffset: 1 });
+      if (!r.ok) toast.error(r.error);
+      else
+        toast.success(
+          skippedNextCycle
+            ? t.nextCycle.ruleUnskipped
+            : t.nextCycle.ruleSkipped,
+        );
     });
   }
 
@@ -79,8 +97,27 @@ export function RuleRow({
             {!rule.isActive && ' • לא פעיל'}
             {rule.remainingOccurrences != null &&
               ` • ${rule.remainingOccurrences} שנותרו`}
+            {skippedNextCycle && (
+              <span className="text-amber-600"> • {t.nextCycle.skippedTag}</span>
+            )}
           </p>
         </div>
+        <Button
+          size="icon"
+          variant="ghost"
+          onClick={handleToggleNextCycleSkip}
+          disabled={pending}
+          aria-label={
+            skippedNextCycle ? t.nextCycle.unskip : t.nextCycle.skip
+          }
+          title={skippedNextCycle ? t.nextCycle.unskip : t.nextCycle.skip}
+        >
+          {skippedNextCycle ? (
+            <RotateCcw className="size-4 text-amber-600" />
+          ) : (
+            <CalendarX className="size-4" />
+          )}
+        </Button>
         <Button
           size="icon"
           variant="ghost"

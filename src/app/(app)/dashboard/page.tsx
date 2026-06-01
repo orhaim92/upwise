@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { Plus, Sparkles } from 'lucide-react';
 import { and, desc, eq } from 'drizzle-orm';
-import { differenceInHours, subMonths } from 'date-fns';
+import { addMonths, differenceInHours, subMonths } from 'date-fns';
 import { auth } from '@/lib/auth/config';
 import { getUserHouseholdId } from '@/lib/auth/household';
 import { db } from '@/lib/db';
@@ -35,8 +35,10 @@ import { StalenessBanner } from '@/components/staleness-banner';
 import { cn } from '@/lib/utils';
 import { template } from '@/lib/format';
 import { STALENESS_HOURS } from '@/lib/constants';
+import { projectCycleRecurring } from '@/lib/cycles/cycle-preview';
 import { AllowanceHero } from './_components/allowance-hero';
 import { CycleMathCard } from './_components/cycle-math-card';
+import { NextCyclePreview } from './_components/next-cycle-preview';
 import { DashboardCharts } from './_components/dashboard-charts';
 import type { ChartRange } from './_components/range-picker';
 import { t } from '@/lib/i18n/he';
@@ -187,6 +189,17 @@ export default async function DashboardPage({ searchParams }: Props) {
   ]);
   const cycleRangeLabel = formatCycleRange(chartCycle);
 
+  // Forward-looking preview of next cycle's recurring commitments, with
+  // per-rule skip toggles. Only computed when viewing the current cycle —
+  // browsing past cycles, a "next cycle" panel would just be confusing.
+  const nextCycle = getActiveBillingCycle(
+    household.billingCycleStartDay,
+    addMonths(today, 1),
+  );
+  const nextCyclePreview = isCurrentCycle
+    ? await projectCycleRecurring(householdId, nextCycle)
+    : null;
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-4">
@@ -220,6 +233,15 @@ export default async function DashboardPage({ searchParams }: Props) {
       <AllowanceHero allowance={allowance} isStale={isStale} />
 
       <CycleMathCard allowance={allowance} />
+
+      {nextCyclePreview && (
+        <NextCyclePreview
+          items={nextCyclePreview.items}
+          totalExpense={nextCyclePreview.totalExpense}
+          totalIncome={nextCyclePreview.totalIncome}
+          cycleLabel={formatCycleRange(nextCycle)}
+        />
+      )}
 
       <DashboardCharts
         donutSlices={donutSlices}

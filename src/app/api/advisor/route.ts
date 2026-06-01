@@ -20,6 +20,8 @@ import { getRecurringSummary } from '@/lib/advisor/tools/recurring-summary';
 import { simulateEvent } from '@/lib/advisor/tools/simulate-event';
 import { compareSpendingPeriods } from '@/lib/advisor/tools/compare-periods';
 import { getSubscriptionAudit } from '@/lib/advisor/tools/subscription-audit';
+import { searchTransactions } from '@/lib/advisor/tools/search-transactions';
+import { getNextCycleForecast } from '@/lib/advisor/tools/next-cycle-forecast';
 
 export const maxDuration = 60;
 
@@ -77,7 +79,10 @@ const BASE_SYSTEM_PROMPT = `אתה היועץ הפיננסי של UpWise, אפל
 חוקי פלט קריטיים:
 - אם אתה מצטט מספרים, חייבים לבוא מקריאת כלי. אל תמציא.
 - ענה תמיד בעברית, גם אם השאלה באנגלית.
-- אם השאלה דורשת נתונים על המצב הנוכחי - תקרא ל-getCashFlowSummary לפני שאתה עונה.`;
+- אם השאלה דורשת נתונים על המצב הנוכחי - תקרא ל-getCashFlowSummary לפני שאתה עונה.
+- לשאלות ספציפיות על תנועות בפועל (בית עסק מסוים, סכום מסוים, "מתי", "כמה ב..."), תקרא ל-searchTransactions ותענה מהשורות שחזרו. אל תמציא תנועות.
+- לשאלות על המחזור הבא, על תשלומים עתידיים, או על "מה דילגתי", תקרא ל-getNextCycleForecast. הוא מודע לדילוגים של המשתמש (פריט עם skipped=true לא נספר) וכולל גם תשלומי אשראי עתידיים שכבר מתוזמנים. אל תשתמש ב-getRecurringSummary למחזור הבא — הוא מתעלם מדילוגים.
+- המשתמש יכול לדלג על תשלומים קבועים למחזור מסוים דרך הממשק (בדאשבורד או בעמוד "קבועים"). אם הוא אומר שדילג על משהו, אמת זאת מול getNextCycleForecast ולא תתווכח — הנתון שם הוא מקור האמת.`;
 
 export async function POST(req: Request) {
   if (!advisorEnabled()) {
@@ -162,6 +167,38 @@ export async function POST(req: Request) {
           'רשימת מנויים והוצאות חודשיות חוזרות, ממוינות לפי סכום חודשי. שימוש: לזהות מנויים שאולי לא בשימוש.',
         inputSchema: z.object({}),
         execute: withTenantContext(getSubscriptionAudit, ctx),
+      }),
+      searchTransactions: tool({
+        description:
+          'מחפש תנועות בודדות אמיתיות לפי בית עסק/תיאור, טווח תאריכים, טווח סכומים, קטגוריה וסוג. מחזיר עד 50 שורות. שימוש: שאלות ספציפיות על תנועות בפועל ("כמה הוצאתי ברמי לוי בשבוע שעבר?", "אילו תנועות מעל 500 החודש?", "מתי הקנייה האחרונה ב...?"). לסיכומים מצרפיים העדף getSpendingByCategory.',
+        inputSchema: z.object({
+          search: z
+            .string()
+            .optional()
+            .describe('טקסט חופשי לחיפוש בתיאור/בית העסק'),
+          startDate: z.string().optional().describe('YYYY-MM-DD'),
+          endDate: z.string().optional().describe('YYYY-MM-DD'),
+          minAmount: z
+            .number()
+            .optional()
+            .describe('סכום מינימלי (ערך מוחלט, ללא סימן)'),
+          maxAmount: z
+            .number()
+            .optional()
+            .describe('סכום מקסימלי (ערך מוחלט, ללא סימן)'),
+          category: z
+            .string()
+            .optional()
+            .describe('מפתח קטגוריה (key), למשל "food"'),
+          type: z.enum(['all', 'income', 'expense']).optional(),
+        }),
+        execute: withTenantContext(searchTransactions, ctx),
+      }),
+      getNextCycleForecast: tool({
+        description:
+          'תחזית למחזור החיוב הבא: תשלומים קבועים צפויים כולל סימון מה שהמשתמש דילג עליו (מדולג=לא נספר), בתוספת תשלומים/הוראות קבע שכבר מתוזמנים (כמו תשלומי אשראי עתידיים). זה הכלי הנכון לשאלות "מה צפוי לי בחודש הבא" / "מה דילגתי". אל תשתמש ב-getRecurringSummary לשאלות על המחזור הבא — הוא לא מודע לדילוגים.',
+        inputSchema: z.object({}),
+        execute: withTenantContext(getNextCycleForecast, ctx),
       }),
     },
     // Cap multi-step tool use so a runaway model can't burn budget.

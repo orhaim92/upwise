@@ -241,6 +241,8 @@ export const t = {
     deleteConfirm: 'למחוק את החוק? תנועות מקושרות לא יימחקו.',
     category: 'קטגוריה',
     none: 'ללא',
+    monthlyTotal: 'סה"כ חודשי:',
+    monthlyNet: 'מאזן חודשי (הכנסות פחות הוצאות)',
   },
   goals: {
     title: 'יעדי חיסכון',
@@ -321,6 +323,18 @@ export const t = {
     whyMaterializedFkLink: 'מקושר לתנועה במחזור',
     whyMaterializedPatternMatch: 'זוהה אוטומטית לפי תיאור וסכום',
     whyMaterializedUserSkip: 'דולג ידנית',
+  },
+  nextCycle: {
+    title: 'המחזור הבא',
+    subtitle: 'תשלומים קבועים צפויים. אפשר לדלג על כל אחד מהם מראש.',
+    empty: 'אין תשלומים קבועים צפויים במחזור הבא.',
+    totalExpense: 'סה"כ הוצאות צפויות',
+    totalIncome: 'סה"כ הכנסות צפויות',
+    skippedTag: 'מדולג במחזור הבא',
+    skip: 'דלג במחזור הבא',
+    unskip: 'בטל דילוג במחזור הבא',
+    ruleSkipped: 'הכלל ידולג במחזור הבא',
+    ruleUnskipped: 'הדילוג במחזור הבא בוטל',
   },
   cycleSettings: {
     title: 'הגדרות מחזור חיוב',

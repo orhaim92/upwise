@@ -1,30 +1,12 @@
 import { and, eq } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { recurringRules } from '@/lib/db/schema';
+import { monthlyEquivalent } from '@/lib/recurring/monthly-equivalent';
 import type { AdvisorContext } from '../wrap-tool';
 
 // All confirmed active recurring rules + a monthly-equivalent total so the
 // model can answer "what's my fixed monthly burden" or "compare income vs
 // expense" without doing the math itself.
-function monthlyEquivalent(amount: number, frequency: string): number {
-  switch (frequency) {
-    case 'weekly':
-      return amount * 4.33;
-    case 'monthly':
-      return amount;
-    case 'bimonthly':
-      return amount / 2;
-    case 'quarterly':
-      return amount / 3;
-    case 'semiannual':
-      return amount / 6;
-    case 'yearly':
-      return amount / 12;
-    default:
-      return amount;
-  }
-}
-
 export async function getRecurringSummary(
   _args: object,
   ctx: AdvisorContext,
