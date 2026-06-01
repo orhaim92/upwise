@@ -17,8 +17,10 @@
 // Bump this when the cache shape needs invalidation. Old caches are
 // pruned in `activate`. v2 invalidates the v1 stale-while-revalidate
 // cache so existing users stop seeing stale authenticated pages after
-// session expiry.
-const CACHE_VERSION = 'v2';
+// session expiry. v3 purges chunk caches left behind by a dev-registered
+// SW — the SW no longer registers in development (see sw-register.tsx),
+// so this bump evicts any stale `/_next/` chunks already cached there.
+const CACHE_VERSION = 'v3';
 const SHELL_CACHE = `upwise-shell-${CACHE_VERSION}`;
 const DATA_CACHE = `upwise-data-${CACHE_VERSION}`;
 

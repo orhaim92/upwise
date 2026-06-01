@@ -56,7 +56,13 @@ export function TransactionsFilters({
   // choice from localStorage so navigating away and back doesn't reset.
   // SSR renders collapsed; client useEffect restores expanded if stored.
   const [expanded, setExpanded] = useState(false);
+  // useSearchParams() yields empty params during SSR but the real URL params
+  // on the client, so anything derived from them (the active-filter badge
+  // below) would mismatch on hydration. Gate that UI behind a mount flag so
+  // the server render and the first client render agree, then reveal it.
+  const [mounted, setMounted] = useState(false);
   useEffect(() => {
+    setMounted(true);
     try {
       if (localStorage.getItem('upwise.filters.expanded') === '1') {
         setExpanded(true);
@@ -233,7 +239,7 @@ export function TransactionsFilters({
         <span className="flex items-center gap-2 text-sm font-medium text-slate-700">
           <SlidersHorizontal className="size-4" />
           {t.transactions.filtersTitle}
-          {activeCount > 0 && (
+          {mounted && activeCount > 0 && (
             <span className="inline-flex items-center justify-center size-5 rounded-full bg-violet-100 text-violet-700 text-xs font-semibold">
               {activeCount}
             </span>
