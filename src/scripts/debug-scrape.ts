@@ -19,13 +19,19 @@ async function main() {
   const args = process.argv.slice(2);
   const accountId = args[0];
   if (!accountId) {
-    console.error('Usage: npm run debug:scrape -- <accountId> [--months N]');
+    console.error(
+      'Usage: npm run debug:scrape -- <accountId> [--months N] [--show]',
+    );
     process.exit(1);
   }
 
   const monthsIdx = args.indexOf('--months');
   const months =
     monthsIdx >= 0 && args[monthsIdx + 1] ? parseInt(args[monthsIdx + 1], 10) : 6;
+
+  // --show opens a visible (headful) browser so you can watch the login and
+  // see exactly where it fails (wrong-password page, OTP, block, CAPTCHA).
+  const showBrowser = args.includes('--show');
 
   const { db } = await import('@/lib/db');
   const { accounts } = await import('@/lib/db/schema');
@@ -72,14 +78,28 @@ async function main() {
 
   const credentials = decryptJSON(account.encryptedCredentials);
 
+  // On failure the library screenshots the final page (full-page) to this
+  // path before closing the browser — captures the exact error/OTP/CAPTCHA
+  // page. Works headless too, so you don't need to watch the window.
+  const ts0 = new Date().toISOString().replace(/[:.]/g, '-');
+  const failureShot = join(
+    process.cwd(),
+    `scrape-failure-${account.provider}-${ts0}.png`,
+  );
+
   const scraper = createScraper({
     companyId: company,
     startDate: subMonths(new Date(), months),
     combineInstallments: false,
-    showBrowser: false,
-    verbose: false,
+    showBrowser,
+    verbose: showBrowser,
     timeout: 120_000,
+    storeFailureScreenShotPath: failureShot,
   });
+
+  if (showBrowser) {
+    console.log('\nHeadful mode: a browser window will open. Watch the login.\n');
+  }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const result = await scraper.scrape(credentials as any);
@@ -87,6 +107,11 @@ async function main() {
   // Print a brief summary to console
   if (!result.success) {
     console.error('Scrape failed:', result.errorType, result.errorMessage);
+    console.error(`\nFailure screenshot saved to:\n  ${failureShot}`);
+    console.error(
+      'Open that image to see why login failed (wrong password, OTP, ' +
+        'block, CAPTCHA...).',
+    );
     process.exit(1);
   }
 
