@@ -179,10 +179,10 @@ export async function updateAccount(input: unknown): Promise<ActionResult> {
   const parsed = updateAccountSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: 'נתונים לא תקינים' };
 
-  const { id, displayName, isActive } = parsed.data;
+  const { id, displayName, isActive, credentials } = parsed.data;
 
   const [acc] = await db
-    .select({ householdId: accounts.householdId })
+    .select({ householdId: accounts.householdId, provider: accounts.provider })
     .from(accounts)
     .where(eq(accounts.id, id))
     .limit(1);
@@ -190,11 +190,26 @@ export async function updateAccount(input: unknown): Promise<ActionResult> {
 
   await verifyHouseholdAccess(session.user.id, acc.householdId);
 
+  // Re-encrypt credentials only when the user actually filled the fields.
+  let encrypted: string | undefined;
+  if (credentials && Object.values(credentials).some((v) => v.trim().length > 0)) {
+    const provider = getProvider(acc.provider);
+    if (!provider) return { ok: false, error: 'ספק לא נתמך' };
+    for (const field of provider.fields) {
+      const value = credentials[field.key];
+      if (!value || value.trim().length === 0) {
+        return { ok: false, error: `חסר השדה: ${field.label}` };
+      }
+    }
+    encrypted = encryptJSON(credentials);
+  }
+
   await db
     .update(accounts)
     .set({
       displayName: displayName.trim(),
       ...(typeof isActive === 'boolean' ? { isActive } : {}),
+      ...(encrypted ? { encryptedCredentials: encrypted } : {}),
     })
     .where(eq(accounts.id, id));
 

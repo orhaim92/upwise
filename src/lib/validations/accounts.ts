@@ -10,6 +10,7 @@ export const updateAccountSchema = z.object({
   id: z.string().uuid(),
   displayName: z.string().min(1).max(100),
   isActive: z.boolean().optional(),
+  credentials: z.record(z.string(), z.string()).optional(),
 });
 
 export const deleteAccountSchema = z.object({
