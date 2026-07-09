@@ -80,6 +80,7 @@ export async function computeDailyAllowance(
   const cycle =
     precomputedCycle ?? getActiveBillingCycle(cycleStartDay, today);
   const startStr = format(cycle.startDate, 'yyyy-MM-dd');
+  const endStr = format(cycle.endDate, 'yyyy-MM-dd');
   const todayStr = format(today, 'yyyy-MM-dd');
 
   // Per-bank-account balance (source of truth)
@@ -185,14 +186,19 @@ export async function computeDailyAllowance(
     }
   }
 
-  // Manual one-time items for this cycle
+  // Manual one-time items for this cycle. Matched by range (not exact key):
+  // the cycle start follows the actual salary landing, so an item keyed
+  // while the start was still the projected/configured day must still be
+  // found. Cycles partition the timeline, so each key falls in exactly one
+  // cycle's range.
   const manualItems = await db
     .select()
     .from(manualCycleItems)
     .where(
       and(
         eq(manualCycleItems.householdId, householdId),
-        eq(manualCycleItems.cycleStartDate, startStr),
+        sql`${manualCycleItems.cycleStartDate} >= ${startStr}`,
+        sql`${manualCycleItems.cycleStartDate} <= ${endStr}`,
       ),
     );
 

@@ -8,7 +8,7 @@ import { auth } from '@/lib/auth/config';
 import { db } from '@/lib/db';
 import { households, manualCycleItems } from '@/lib/db/schema';
 import { getUserHouseholdId } from '@/lib/auth/household';
-import { getActiveBillingCycle } from '@/lib/cycles/billing-cycle';
+import { resolveActiveBillingCycle } from '@/lib/cycles/resolve-cycle';
 
 const addItemSchema = z.object({
   type: z.enum(['income', 'expense']),
@@ -33,12 +33,19 @@ export async function addManualItem(
 
   const householdId = await getUserHouseholdId(session.user.id);
 
+  // Key the item to the RESOLVED (salary-anchored) cycle start — the same
+  // start the dashboard reads with — so the item doesn't land under a stale
+  // day-anchored key and vanish from the breakdown.
   const [hh] = await db
-    .select({ billingCycleStartDay: households.billingCycleStartDay })
+    .select({
+      id: households.id,
+      billingCycleStartDay: households.billingCycleStartDay,
+      autoDetectCycleStart: households.autoDetectCycleStart,
+    })
     .from(households)
     .where(eq(households.id, householdId))
     .limit(1);
-  const cycle = getActiveBillingCycle(hh.billingCycleStartDay);
+  const cycle = await resolveActiveBillingCycle(hh);
   const cycleStartStr = format(cycle.startDate, 'yyyy-MM-dd');
 
   await db.insert(manualCycleItems).values({

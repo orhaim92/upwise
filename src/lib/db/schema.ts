@@ -45,18 +45,18 @@ export const households = pgTable('households', {
   id: uuid('id').defaultRandom().primaryKey(),
   name: text('name').notNull(),
   // Fallback / "expected" cycle start day. Used directly when
-  // autoDetectCycleStart is false; otherwise used as the anchor day around
-  // which we look for the actual landing date of the first income tx of
-  // the month.
+  // autoDetectCycleStart is false; otherwise only used to PROJECT when the
+  // next salary is expected (days-remaining math) and as a fallback when no
+  // linked salary tx exists yet.
   billingCycleStartDay: integer('billing_cycle_start_day').notNull().default(1),
-  // When true, the active cycle starts on the earliest linked income tx
-  // date that lands within ±10 days of billingCycleStartDay. This handles
-  // households where payday slides ±a few days month-to-month (holidays,
-  // weekend shifts) — the cycle follows the actual salary instead of
-  // splitting it across two cycles.
+  // When true (the default), cycles run salary-to-salary: the active cycle
+  // starts on the day the period's first salary actually landed and ends
+  // the day before the next period's first salary lands. A late salary
+  // keeps the current cycle open — it never rolls over on the calendar
+  // alone. Turn off for households that want fixed dates.
   autoDetectCycleStart: boolean('auto_detect_cycle_start')
     .notNull()
-    .default(false),
+    .default(true),
   // List of card-last-four values that are immediate-charge (debit-style)
   // cards — דיירקט and similar. The bank scraper still reports them under
   // the CC issuer account, but their charge hits the bank account on the

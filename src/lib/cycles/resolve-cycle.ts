@@ -1,16 +1,25 @@
-import { addDays } from 'date-fns';
+import { addDays, differenceInCalendarDays, format } from 'date-fns';
 import { and, eq, gt, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { recurringRules, transactions } from '@/lib/db/schema';
 import {
+  buildCycle,
+  expectedNextAnchor,
   getActiveBillingCycle,
+  MIN_CYCLE_GAP_DAYS,
   type BillingCycle,
 } from './billing-cycle';
 
-// Auto-detected cycles let payday slide ±10 days off the configured anchor.
-// Past that, we trust the user's configured day — a tx that lands 3 weeks
-// off is almost certainly not the salary that should anchor the cycle.
-const ANCHOR_WINDOW_DAYS = 10;
+// How far back we look for salary landings when anchoring the cycle. Long
+// enough to survive a couple of missed/late salaries; past that we assume
+// the income data is stale and fall back to the configured day.
+const ANCHOR_LOOKBACK_DAYS = 92;
+
+// A second salary landing this many days (or more) after the current anchor
+// starts a new cycle even within the same calendar month — covers a salary
+// paid early (e.g. Dec 31 for January). Below this, a same-month landing is
+// a second earner / bonus inside the SAME cycle.
+const SAME_MONTH_NEW_CYCLE_GAP_DAYS = 25;
 
 type HouseholdCycleConfig = {
   id: string;
@@ -20,13 +29,18 @@ type HouseholdCycleConfig = {
 
 // Returns the active billing cycle for a household.
 //
-// When `autoDetectCycleStart` is off this is a thin async wrapper around the
-// existing sync `getActiveBillingCycle` — no DB calls.
+// Salary-anchored (the default): the cycle runs salary-to-salary. It starts
+// on the day the first salary of the period actually landed, and ends the
+// day before the NEXT period's first salary lands. If that next salary is
+// late, the current cycle simply stays open until it arrives — the cycle
+// never rolls over on the calendar alone. The configured
+// `billingCycleStartDay` is only used to PROJECT when the next salary is
+// expected (for days-remaining math), and as a hard fallback when no linked
+// salary exists at all.
 //
-// When on, the cycle is anchored to the actual landing date of the earliest
-// linked income tx around the configured day. A late/early salary slides
-// the cycle with it so the salary always lands inside the same cycle as the
-// month's expenses, instead of straddling the boundary.
+// When `autoDetectCycleStart` is off, the household opted into fixed dates:
+// this is a thin async wrapper around the sync `getActiveBillingCycle` — no
+// DB calls.
 export async function resolveActiveBillingCycle(
   household: HouseholdCycleConfig,
   today: Date = new Date(),
@@ -35,48 +49,76 @@ export async function resolveActiveBillingCycle(
     return getActiveBillingCycle(household.billingCycleStartDay, today);
   }
 
-  const naive = getActiveBillingCycle(household.billingCycleStartDay, today);
+  const incomeDates = await linkedIncomeDates(
+    household.id,
+    addDays(today, -ANCHOR_LOOKBACK_DAYS),
+    today,
+  );
 
-  // Two probes: one around the cycle's natural start, one around the day
-  // AFTER its natural end (= next cycle's start). Each picks the earliest
-  // linked income tx in its ±10d window. End of THIS cycle = (next
-  // cycle's start) - 1 day.
-  const [thisStart, nextStart] = await Promise.all([
-    earliestIncomeTxInWindow(
-      household.id,
-      addDays(naive.startDate, -ANCHOR_WINDOW_DAYS),
-      addDays(naive.startDate, ANCHOR_WINDOW_DAYS),
-    ),
-    earliestIncomeTxInWindow(
-      household.id,
-      addDays(naive.endDate, 1 - ANCHOR_WINDOW_DAYS),
-      addDays(naive.endDate, 1 + ANCHOR_WINDOW_DAYS),
-    ),
-  ]);
+  const anchor = latestCycleAnchor(incomeDates);
+  if (!anchor) {
+    // No salary data in the window (new household, or income rule not yet
+    // confirmed) — fall back to the configured day.
+    return getActiveBillingCycle(household.billingCycleStartDay, today);
+  }
 
-  const startDate = thisStart ?? naive.startDate;
-  const endDate = nextStart
-    ? endOfDay(addDays(nextStart, -1))
-    : naive.endDate;
+  // The cycle ends the day before the next salary. That salary hasn't
+  // landed yet (otherwise IT would be the anchor), so project it from the
+  // configured day — and if the projection date has already passed with no
+  // salary, keep the cycle open through today instead of rolling over.
+  const projectedEnd = addDays(
+    expectedNextAnchor(anchor, household.billingCycleStartDay),
+    -1,
+  );
+  const todayMidnight = new Date(today);
+  todayMidnight.setHours(0, 0, 0, 0);
+  const endDate = projectedEnd < todayMidnight ? todayMidnight : projectedEnd;
 
-  return buildCycle(startDate, endDate, today);
+  return buildCycle(anchor, endDate, today);
 }
 
-async function earliestIncomeTxInWindow(
+// Walk the salary landings oldest-to-newest and keep the last cycle anchor.
+// A landing starts a new cycle when it's far enough after the current
+// anchor: crossing into a later calendar month with at least
+// MIN_CYCLE_GAP_DAYS of distance (a normal month-to-month salary, even if
+// it slid a few days), or SAME_MONTH_NEW_CYCLE_GAP_DAYS within the same
+// month (a next-month salary paid early). Anything closer joins the current
+// cycle (second earner, bonus).
+function latestCycleAnchor(sortedDates: Date[]): Date | null {
+  let anchor: Date | null = null;
+  for (const d of sortedDates) {
+    if (!anchor) {
+      anchor = d;
+      continue;
+    }
+    const gap = differenceInCalendarDays(d, anchor);
+    const laterMonth =
+      d.getFullYear() > anchor.getFullYear() ||
+      d.getMonth() > anchor.getMonth();
+    if (
+      (laterMonth && gap >= MIN_CYCLE_GAP_DAYS) ||
+      gap >= SAME_MONTH_NEW_CYCLE_GAP_DAYS
+    ) {
+      anchor = d;
+    }
+  }
+  return anchor;
+}
+
+// Distinct landing dates of txs FK-linked to an active confirmed income
+// rule, oldest first. Anything else (a refund, a one-off transfer in)
+// shouldn't reshape the cycle. The set is small and indexed on
+// (household, date).
+async function linkedIncomeDates(
   householdId: string,
   windowStart: Date,
   windowEnd: Date,
-): Promise<Date | null> {
-  const startStr = windowStart.toISOString().slice(0, 10);
-  const endStr = windowEnd.toISOString().slice(0, 10);
+): Promise<Date[]> {
+  const startStr = format(windowStart, 'yyyy-MM-dd');
+  const endStr = format(windowEnd, 'yyyy-MM-dd');
 
-  // Restricted to txs FK-linked to an active confirmed income rule —
-  // anything else (a refund, a one-off transfer in) shouldn't reshape the
-  // cycle. The set is small and indexed on (household, date).
-  const [row] = await db
-    .select({
-      date: sql<string>`MIN(${transactions.date})`,
-    })
+  const rows = await db
+    .selectDistinct({ date: transactions.date })
     .from(transactions)
     .innerJoin(
       recurringRules,
@@ -92,41 +134,14 @@ async function earliestIncomeTxInWindow(
         sql`${transactions.date} >= ${startStr}`,
         sql`${transactions.date} <= ${endStr}`,
       ),
-    );
+    )
+    .orderBy(transactions.date);
 
-  if (!row?.date) return null;
   // tx.date is stored as a date column (no time/TZ). Treat it as
   // local-midnight so it lines up with the rest of the cycle math, which
   // also runs in local time.
-  const [y, m, d] = row.date.split('-').map(Number);
-  return new Date(y, m - 1, d, 0, 0, 0, 0);
-}
-
-function endOfDay(d: Date): Date {
-  const out = new Date(d);
-  out.setHours(23, 59, 59, 999);
-  return out;
-}
-
-function buildCycle(startDate: Date, endDate: Date, today: Date): BillingCycle {
-  const start = new Date(startDate);
-  start.setHours(0, 0, 0, 0);
-  const end = endOfDay(endDate);
-
-  const msPerDay = 1000 * 60 * 60 * 24;
-  const daysTotal =
-    Math.round((end.getTime() - start.getTime()) / msPerDay) + 1;
-
-  const todayMidnight = new Date(today);
-  todayMidnight.setHours(0, 0, 0, 0);
-  const daysPassed = Math.max(
-    1,
-    Math.round((todayMidnight.getTime() - start.getTime()) / msPerDay) + 1,
-  );
-  const daysRemaining = Math.max(
-    0,
-    Math.round((end.getTime() - todayMidnight.getTime()) / msPerDay) + 1,
-  );
-
-  return { startDate: start, endDate: end, daysTotal, daysPassed, daysRemaining };
+  return rows.map((r) => {
+    const [y, m, d] = r.date.split('-').map(Number);
+    return new Date(y, m - 1, d, 0, 0, 0, 0);
+  });
 }

@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { format } from 'date-fns';
 import { db } from '@/lib/db';
 import { cycleSkips, recurringRules } from '@/lib/db/schema';
@@ -39,6 +39,7 @@ export async function projectCycleRecurring(
   cycle: BillingCycle,
 ): Promise<CyclePreview> {
   const startStr = format(cycle.startDate, 'yyyy-MM-dd');
+  const endStr = format(cycle.endDate, 'yyyy-MM-dd');
 
   const [rules, skips] = await Promise.all([
     db
@@ -51,13 +52,17 @@ export async function projectCycleRecurring(
           eq(recurringRules.detectionStatus, 'confirmed'),
         ),
       ),
+    // Skips matched by range (not exact key): cycle starts follow the actual
+    // salary landing, so a skip stamped under a projected start date must
+    // still apply once the real start shifts.
     db
       .select({ recurringRuleId: cycleSkips.recurringRuleId })
       .from(cycleSkips)
       .where(
         and(
           eq(cycleSkips.householdId, householdId),
-          eq(cycleSkips.cycleStartDate, startStr),
+          sql`${cycleSkips.cycleStartDate} >= ${startStr}`,
+          sql`${cycleSkips.cycleStartDate} <= ${endStr}`,
         ),
       ),
   ]);

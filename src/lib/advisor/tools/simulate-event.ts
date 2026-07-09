@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { households, savingsGoals } from '@/lib/db/schema';
 import { computeDailyAllowance } from '@/lib/cycles/daily-allowance';
+import { resolveActiveBillingCycle } from '@/lib/cycles/resolve-cycle';
 import type { AdvisorContext } from '../wrap-tool';
 
 type Args = {
@@ -28,9 +29,12 @@ export async function simulateEvent(args: Args, ctx: AdvisorContext) {
     .limit(1);
   if (!hh) throw new Error('Household not found');
 
+  const resolvedCycle = await resolveActiveBillingCycle(hh);
   const baseline = await computeDailyAllowance(
     ctx.householdId,
     hh.billingCycleStartDay,
+    new Date(),
+    resolvedCycle,
   );
 
   const eventDate = new Date(args.date);

@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { Plus, Sparkles } from 'lucide-react';
 import { and, desc, eq } from 'drizzle-orm';
-import { addMonths, differenceInHours, subMonths } from 'date-fns';
+import { differenceInHours, subMonths } from 'date-fns';
 import { auth } from '@/lib/auth/config';
 import { getUserHouseholdId } from '@/lib/auth/household';
 import { db } from '@/lib/db';
@@ -18,6 +18,7 @@ import { computeDailyAllowance } from '@/lib/cycles/daily-allowance';
 import {
   formatCycleRange,
   getActiveBillingCycle,
+  projectNextCycle,
 } from '@/lib/cycles/billing-cycle';
 import { resolveActiveBillingCycle } from '@/lib/cycles/resolve-cycle';
 import {
@@ -192,9 +193,12 @@ export default async function DashboardPage({ searchParams }: Props) {
   // Forward-looking preview of next cycle's recurring commitments, with
   // per-rule skip toggles. Only computed when viewing the current cycle —
   // browsing past cycles, a "next cycle" panel would just be confusing.
-  const nextCycle = getActiveBillingCycle(
+  // Derived from the resolved current cycle so it starts the day after the
+  // current (salary-anchored) cycle actually ends.
+  const nextCycle = projectNextCycle(
+    currentCycle,
     household.billingCycleStartDay,
-    addMonths(today, 1),
+    today,
   );
   const nextCyclePreview = isCurrentCycle
     ? await projectCycleRecurring(householdId, nextCycle)

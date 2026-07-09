@@ -20,6 +20,7 @@ import { applyUserLearnedCategories } from '@/lib/transactions/learned-categoriz
 import { consolidateCrossDayDuplicates } from '@/lib/transactions/consolidate-cross-day-duplicates';
 import { consolidateCcPlaceholders } from '@/lib/transactions/consolidate-cc-placeholders';
 import { computeDailyAllowance } from '@/lib/cycles/daily-allowance';
+import { resolveActiveBillingCycle } from '@/lib/cycles/resolve-cycle';
 import { sendPushToHousehold } from '@/lib/pwa/push-server';
 import { formatILS } from '@/lib/format';
 
@@ -341,9 +342,12 @@ export async function syncAllAccounts(
       .where(eq(households.id, householdId))
       .limit(1);
     if (hh) {
+      const cycle = await resolveActiveBillingCycle(hh);
       const allowance = await computeDailyAllowance(
         householdId,
         hh.billingCycleStartDay,
+        new Date(),
+        cycle,
       );
       if (allowance.isOverBudget) {
         await sendPushToHousehold(householdId, 'lowBalanceEnabled', {

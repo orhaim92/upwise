@@ -1,4 +1,5 @@
 import { and, eq, sql } from 'drizzle-orm';
+import { format } from 'date-fns';
 import { db } from '@/lib/db';
 import {
   cycleSkips,
@@ -28,19 +29,26 @@ export async function checkMaterialization(
   cycleStart: Date,
   cycleEnd: Date,
 ): Promise<Map<string, MaterializationCheck>> {
-  const startStr = cycleStart.toISOString().slice(0, 10);
-  const endStr = cycleEnd.toISOString().slice(0, 10);
+  // format() renders in LOCAL time — toISOString() would shift a local
+  // midnight back to the previous UTC day and widen the cycle by a day.
+  const startStr = format(cycleStart, 'yyyy-MM-dd');
+  const endStr = format(cycleEnd, 'yyyy-MM-dd');
 
   const out = new Map<string, MaterializationCheck>();
 
-  // Path 3: user-skipped rules for this cycle
+  // Path 3: user-skipped rules for this cycle. Matched by range (not exact
+  // key): the cycle start follows the actual salary landing, so a skip
+  // stamped while the start was still the projected/configured day must
+  // still apply. Cycles partition the timeline, so each key falls in
+  // exactly one cycle's range.
   const skips = await db
     .select({ recurringRuleId: cycleSkips.recurringRuleId })
     .from(cycleSkips)
     .where(
       and(
         eq(cycleSkips.householdId, householdId),
-        eq(cycleSkips.cycleStartDate, startStr),
+        sql`${cycleSkips.cycleStartDate} >= ${startStr}`,
+        sql`${cycleSkips.cycleStartDate} <= ${endStr}`,
       ),
     );
   const skippedIds = new Set(skips.map((s) => s.recurringRuleId));

@@ -1,7 +1,7 @@
 'use server';
 
 import { and, eq } from 'drizzle-orm';
-import { addMonths, format } from 'date-fns';
+import { format } from 'date-fns';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { auth } from '@/lib/auth/config';
@@ -12,7 +12,8 @@ import {
   recurringRules,
 } from '@/lib/db/schema';
 import { getUserHouseholdId } from '@/lib/auth/household';
-import { getActiveBillingCycle } from '@/lib/cycles/billing-cycle';
+import { projectNextCycle } from '@/lib/cycles/billing-cycle';
+import { resolveActiveBillingCycle } from '@/lib/cycles/resolve-cycle';
 
 // cycleOffset: 0 = current cycle (default, keeps existing dashboard buttons
 // working unchanged), 1 = next cycle, etc. Bounded so a malformed value can't
@@ -28,22 +29,28 @@ const unskipSchema = z.object({
   cycleOffset: z.number().int().min(0).max(12).optional(),
 });
 
-// Resolve the start date (yyyy-MM-dd) of the cycle `offset` cycles ahead of the
-// current one. Cycles are monthly and day-anchored, so advancing N months from
-// today lands inside the cycle N steps forward. Future cycles intentionally use
-// the naive day-anchored cycle (no salary auto-detect — that income hasn't
-// arrived yet).
+// Resolve the start date (yyyy-MM-dd) of the cycle `offset` cycles ahead of
+// the current one. Offset 0 is the RESOLVED (salary-anchored) active cycle —
+// the same start the dashboard reads skips with. Future cycles are projected
+// forward from it, one step at a time (that income hasn't arrived yet, so
+// each step falls back to the configured day).
 async function getCycleStartStr(
   householdId: string,
   offset: number,
 ): Promise<string> {
   const [hh] = await db
-    .select({ billingCycleStartDay: households.billingCycleStartDay })
+    .select({
+      id: households.id,
+      billingCycleStartDay: households.billingCycleStartDay,
+      autoDetectCycleStart: households.autoDetectCycleStart,
+    })
     .from(households)
     .where(eq(households.id, householdId))
     .limit(1);
-  const anchor = offset === 0 ? new Date() : addMonths(new Date(), offset);
-  const cycle = getActiveBillingCycle(hh.billingCycleStartDay, anchor);
+  let cycle = await resolveActiveBillingCycle(hh);
+  for (let i = 0; i < offset; i++) {
+    cycle = projectNextCycle(cycle, hh.billingCycleStartDay);
+  }
   return format(cycle.startDate, 'yyyy-MM-dd');
 }
 

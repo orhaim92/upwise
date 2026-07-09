@@ -5,6 +5,7 @@ import { getUserHouseholdId } from '@/lib/auth/household';
 import { db } from '@/lib/db';
 import { accounts, households } from '@/lib/db/schema';
 import { getActiveBillingCycle } from '@/lib/cycles/billing-cycle';
+import { resolveActiveBillingCycle } from '@/lib/cycles/resolve-cycle';
 import { SyncButton } from '@/components/sync-button';
 import { TransactionsFilters } from './_components/transactions-filters';
 import { TransactionsSort } from './_components/transactions-sort';
@@ -51,17 +52,25 @@ export default async function TransactionsPage({ searchParams }: Props) {
     if (Number.isFinite(raw)) {
       const offset = Math.max(-MAX_CYCLE_OFFSET_BACK, Math.min(0, raw));
       const [household] = await db
-        .select({ billingCycleStartDay: households.billingCycleStartDay })
+        .select({
+          id: households.id,
+          billingCycleStartDay: households.billingCycleStartDay,
+          autoDetectCycleStart: households.autoDetectCycleStart,
+        })
         .from(households)
         .where(eq(households.id, householdId))
         .limit(1);
       if (household) {
-        const target =
-          offset === 0 ? new Date() : subMonths(new Date(), -offset);
-        const cycle = getActiveBillingCycle(
-          household.billingCycleStartDay,
-          target,
-        );
+        // Current cycle follows the resolved (salary-anchored) boundaries so
+        // the filter matches the dashboard. Past cycles keep the naive
+        // day-anchored windows for stable, predictable navigation.
+        const cycle =
+          offset === 0
+            ? await resolveActiveBillingCycle(household)
+            : getActiveBillingCycle(
+                household.billingCycleStartDay,
+                subMonths(new Date(), -offset),
+              );
         cycleStart = format(cycle.startDate, 'yyyy-MM-dd');
         // Current cycle: cap at today so future-dated rows (installment
         // schedules, post-dated debits) don't appear in "what happened

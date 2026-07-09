@@ -1,8 +1,9 @@
 import { and, desc, eq, isNull, sql, type SQL } from 'drizzle-orm';
-import { addMonths, format } from 'date-fns';
+import { format } from 'date-fns';
 import { db } from '@/lib/db';
 import { accounts, categories, households, transactions } from '@/lib/db/schema';
-import { getActiveBillingCycle } from '@/lib/cycles/billing-cycle';
+import { projectNextCycle } from '@/lib/cycles/billing-cycle';
+import { resolveActiveBillingCycle } from '@/lib/cycles/resolve-cycle';
 import { projectCycleRecurring } from '@/lib/cycles/cycle-preview';
 import { effectiveCycleDateSql } from '@/lib/charts/effective-date';
 import type { AdvisorContext } from '../wrap-tool';
@@ -21,17 +22,19 @@ import type { AdvisorContext } from '../wrap-tool';
 export async function getNextCycleForecast(_args: object, ctx: AdvisorContext) {
   const [hh] = await db
     .select({
+      id: households.id,
       billingCycleStartDay: households.billingCycleStartDay,
+      autoDetectCycleStart: households.autoDetectCycleStart,
       immediateChargeCards: households.immediateChargeCards,
     })
     .from(households)
     .where(eq(households.id, ctx.householdId))
     .limit(1);
 
-  const nextCycle = getActiveBillingCycle(
-    hh.billingCycleStartDay,
-    addMonths(new Date(), 1),
-  );
+  // Next cycle starts the day after the resolved (salary-anchored) current
+  // cycle ends — not on a naive calendar-month step.
+  const currentCycle = await resolveActiveBillingCycle(hh);
+  const nextCycle = projectNextCycle(currentCycle, hh.billingCycleStartDay);
   const startStr = format(nextCycle.startDate, 'yyyy-MM-dd');
   const endStr = format(nextCycle.endDate, 'yyyy-MM-dd');
 

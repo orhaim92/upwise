@@ -2,6 +2,7 @@ import { db } from '@/lib/db';
 import { accounts, households, transactions } from '@/lib/db/schema';
 import { and, eq, sql } from 'drizzle-orm';
 import { computeDailyAllowance } from '@/lib/cycles/daily-allowance';
+import { resolveActiveBillingCycle } from '@/lib/cycles/resolve-cycle';
 import { format, subDays } from 'date-fns';
 import { formatILS } from '@/lib/format';
 
@@ -25,10 +26,12 @@ export async function buildDigest(householdId: string): Promise<string> {
   const sevenDaysAgoStr = format(subDays(today, 7), 'yyyy-MM-dd');
   const todayStr = format(today, 'yyyy-MM-dd');
 
+  const cycle = await resolveActiveBillingCycle(hh, today);
   const allowance = await computeDailyAllowance(
     householdId,
     hh.billingCycleStartDay,
     today,
+    cycle,
   );
 
   // Negative-sum aggregator: positive shekels = expenses (we negate amount

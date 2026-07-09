@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { households } from '@/lib/db/schema';
 import { computeDailyAllowance } from '@/lib/cycles/daily-allowance';
+import { resolveActiveBillingCycle } from '@/lib/cycles/resolve-cycle';
 import type { AdvisorContext } from '../wrap-tool';
 
 // Returns the same numbers the dashboard renders, structured for the LLM.
@@ -18,9 +19,12 @@ export async function getCashFlowSummary(
     .limit(1);
   if (!hh) throw new Error('Household not found');
 
+  const cycle = await resolveActiveBillingCycle(hh);
   const allowance = await computeDailyAllowance(
     ctx.householdId,
     hh.billingCycleStartDay,
+    new Date(),
+    cycle,
   );
 
   return {
